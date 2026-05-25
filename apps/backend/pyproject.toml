@@ -1,0 +1,66 @@
+[project]
+name = "doc-agent-backend"
+version = "0.1.0"
+description = "Documentation Agent — FastAPI orchestrator + MCP servers"
+readme = "README.md"
+requires-python = ">=3.11"
+
+dependencies = [
+    # Web
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "sse-starlette>=2.1",
+
+    # Agent
+    "langgraph>=0.2.50",
+    "litellm>=1.55",
+
+    # MCP (Anthropic's Python SDK for MCP)
+    "mcp>=1.1",
+
+    # RAG
+    "chromadb>=0.5.20",
+    "fastembed>=0.4",
+    "langchain-text-splitters>=0.3",
+
+    # Observability
+    "langfuse>=2.50",
+
+    # Utils
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-frontmatter>=1.1",
+    "pyyaml>=6.0",
+    "httpx>=0.27",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent", "src/mcp_servers"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "RUF"]
+
+[tool.pytest.ini_options]
+testpaths = ["src", "tests"]
+asyncio_mode = "auto"

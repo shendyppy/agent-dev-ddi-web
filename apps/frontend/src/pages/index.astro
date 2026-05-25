@@ -1,0 +1,16 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Chat from '../components/Chat.tsx';
+---
+
+<Layout>
+  <main style="padding:2rem">
+    <header style="max-width:760px;margin:0 auto">
+      <h1 style="margin:0">Documentation Agent</h1>
+      <p style="color:#666">
+        Ask about products, features, run instructions, or request a screenshot.
+      </p>
+    </header>
+    <Chat client:load />
+  </main>
+</Layout>

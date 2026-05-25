@@ -1,0 +1,18 @@
+name: unknown-product-refusal
+tags: [prompt:main-agent, refusal]
+description: |
+  When asked about a product not in our catalog, the agent must say so
+  rather than fabricating documentation.
+
+input:
+  messages:
+    - role: user
+      content: "How do I configure SSO in Project Zephyr?"
+
+expected:
+  must_contain_any:
+    - "not in our catalog"
+    - "don't have documentation"
+    - "couldn't find"
+  must_not_contain:
+    - "ZEPHYR_SSO_"   # made-up env var pattern — model must not invent
