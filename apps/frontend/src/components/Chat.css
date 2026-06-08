@@ -1,0 +1,299 @@
+/* Chat.css */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+
+:root {
+  --bg-primary: #ffffff;
+  --bg-secondary: #f0f4f9;
+  --text-primary: #1f1f1f;
+  --text-secondary: #444746;
+  --accent-color: #0b57d0;
+  --accent-hover: #0842a0;
+  --border-color: #e3e3e3;
+  --user-msg-bg: #f0f4f9;
+  --agent-msg-bg: transparent;
+  --input-bg: #f0f4f9;
+  --input-focus-bg: #ffffff;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg-primary: #131314;
+    --bg-secondary: #1e1e20;
+    --text-primary: #e3e3e3;
+    --text-secondary: #c4c7c5;
+    --accent-color: #a8c7fa;
+    --accent-hover: #7ca8f9;
+    --border-color: #444746;
+    --user-msg-bg: #1e1e20;
+    --agent-msg-bg: transparent;
+    --input-bg: #1e1e20;
+    --input-focus-bg: #282a2c;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100vh;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden; /* Prevent body scroll, handle scroll in chat */
+}
+
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  max-width: 100%;
+}
+
+.header {
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  border-bottom: 1px solid var(--border-color);
+  background-color: var(--bg-primary);
+  z-index: 10;
+}
+
+.header h1 {
+  font-size: 1.25rem;
+  font-weight: 500;
+  margin: 0;
+  color: var(--text-primary);
+  letter-spacing: -0.01em;
+}
+
+.chat-container {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  scroll-behavior: smooth;
+}
+
+.chat-content {
+  width: 100%;
+  max-width: 800px;
+  display: flex;
+  flex-direction: column;
+  gap: 32px;
+  padding-bottom: 40px; /* Space for scroll */
+}
+
+.welcome-message {
+  text-align: center;
+  margin-top: 10vh;
+}
+
+.welcome-message h2 {
+  font-size: 2rem;
+  font-weight: 600;
+  margin-bottom: 16px;
+  background: linear-gradient(74deg, #4285f4 0, #9b72cb 9%, #d96570 20%, #d96570 24%, #9b72cb 35%, #4285f4 44%, #9b72cb 50%, #d96570 56%, #131314 75%, #131314 100%);
+  background-size: 400% 100%;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: gradient 8s ease infinite;
+}
+
+@media (prefers-color-scheme: dark) {
+  .welcome-message h2 {
+    background: linear-gradient(74deg, #a8c7fa 0, #c58af9 9%, #f28b82 20%, #f28b82 24%, #c58af9 35%, #a8c7fa 44%, #c58af9 50%, #f28b82 56%, #e3e3e3 75%, #e3e3e3 100%);
+    background-size: 400% 100%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+}
+
+@keyframes gradient {
+  0% { background-position: 100% 0%; }
+  50% { background-position: 0% 100%; }
+  100% { background-position: 100% 0%; }
+}
+
+.welcome-message p {
+  color: var(--text-secondary);
+  font-size: 1.125rem;
+}
+
+.message-wrapper {
+  display: flex;
+  width: 100%;
+}
+
+.message-wrapper.user {
+  justify-content: flex-end;
+}
+
+.message-wrapper.assistant {
+  justify-content: flex-start;
+}
+
+.message {
+  display: flex;
+  gap: 16px;
+  max-width: 85%;
+}
+
+.message.user {
+  background-color: var(--user-msg-bg);
+  padding: 12px 20px;
+  border-radius: 24px;
+  border-bottom-right-radius: 4px;
+}
+
+.message.assistant {
+  background-color: var(--agent-msg-bg);
+  padding: 8px 0;
+}
+
+.avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  background: conic-gradient(from 180deg at 50% 50%, #4285f4 0deg, #9b72cb 120deg, #d96570 240deg, #4285f4 360deg);
+  color: white;
+}
+
+.avatar svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}
+
+.message-content {
+  line-height: 1.6;
+  font-size: 1rem;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-content p {
+  margin: 0 0 0.75rem 0;
+}
+
+.message-content p:last-child {
+  margin: 0;
+}
+
+/* Loading Animation */
+.typing-indicator {
+  display: flex;
+  gap: 4px;
+  padding: 8px 0;
+  align-items: center;
+  height: 24px;
+}
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--text-secondary);
+  animation: typing 1.4s infinite ease-in-out;
+}
+
+.typing-dot:nth-child(1) { animation-delay: 0s; }
+.typing-dot:nth-child(2) { animation-delay: 0.2s; }
+.typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes typing {
+  0%, 100% { transform: translateY(0); opacity: 0.4; }
+  50% { transform: translateY(-4px); opacity: 1; }
+}
+
+/* Input Area */
+.input-container {
+  padding: 16px 24px 32px 24px;
+  background: var(--bg-primary);
+  display: flex;
+  justify-content: center;
+  width: 100%;
+  background: linear-gradient(180deg, transparent 0%, var(--bg-primary) 20%);
+}
+
+.input-box {
+  width: 100%;
+  max-width: 800px;
+  background-color: var(--input-bg);
+  border-radius: 32px;
+  display: flex;
+  align-items: flex-end;
+  padding: 8px 8px 8px 24px;
+  transition: all 0.2s ease;
+  border: 1px solid transparent;
+}
+
+.input-box:focus-within {
+  background-color: var(--input-focus-bg);
+  border-color: var(--border-color);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+}
+
+.input-textarea {
+  flex: 1;
+  background: transparent;
+  border: none;
+  outline: none;
+  padding: 12px 0;
+  font-family: inherit;
+  font-size: 1rem;
+  color: var(--text-primary);
+  resize: none;
+  max-height: 200px;
+  line-height: 1.5;
+}
+
+.input-textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+.send-button {
+  background: transparent;
+  border: none;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-secondary);
+  transition: all 0.2s;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+
+.send-button:not(:disabled) {
+  color: var(--accent-color);
+  background-color: var(--user-msg-bg);
+}
+
+.send-button:not(:disabled):hover {
+  background-color: var(--border-color);
+  transform: scale(1.05);
+}
+
+.send-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.send-button svg {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
+}

@@ -3,7 +3,8 @@
  * Loaded via `client:load` from index.astro. Streams responses from
  * the FastAPI backend's /api/chat SSE endpoint.
  */
-import { useState } from 'preact/hooks';
+import { useState, useRef, useEffect } from 'preact/hooks';
+import './Chat.css';
 
 type Message = { role: 'user' | 'assistant'; content: string };
 
@@ -13,21 +14,45 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const endOfMessagesRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  async function send(e: Event) {
-    e.preventDefault();
+  useEffect(() => {
+    endOfMessagesRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [messages, busy]);
+
+  const handleInput = (e: Event) => {
+    const target = e.target as HTMLTextAreaElement;
+    setInput(target.value);
+    // Auto-resize textarea
+    target.style.height = 'auto';
+    target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
+  };
+
+  const handleKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      send();
+    }
+  };
+
+  async function send() {
     if (!input.trim() || busy) return;
 
-    const next: Message[] = [...messages, { role: 'user', content: input }];
+    const currentInput = input;
+    const next: Message[] = [...messages, { role: 'user', content: currentInput }];
     setMessages(next);
     setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
     setBusy(true);
 
     try {
       const res = await fetch(`${API_BASE}/api/portrai-cms-agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: input }),
+        body: JSON.stringify({ query: currentInput }),
       });
 
       if (!res.ok) {
@@ -49,38 +74,83 @@ export default function Chat() {
   }
 
   return (
-    <div style="max-width:760px;margin:2rem auto;font-family:system-ui,sans-serif">
-      <div style="border:1px solid #ddd;border-radius:8px;padding:1rem;min-height:400px;background:#fafafa">
-        {messages.length === 0 && (
-          <p style="color:#888">
-            Ask about a product, a feature, how to run an app, or request a
-            screenshot.
-          </p>
-        )}
-        {messages.map((m, i) => (
-          <div key={i} style="margin-bottom:0.75rem">
-            <strong>{m.role === 'user' ? 'You' : 'Agent'}:</strong>{' '}
-            <span style="white-space:pre-wrap">{m.content}</span>
-          </div>
-        ))}
+    <div class="app-container">
+      <header class="header">
+        <h1>Frontend Agent</h1>
+      </header>
+
+      <div class="chat-container">
+        <div class="chat-content">
+          {messages.length === 0 ? (
+            <div class="welcome-message">
+              <h2>Hello, Gaes</h2>
+              <p>How can I help you with PortrAI documentation today?</p>
+            </div>
+          ) : (
+            messages.map((m, i) => (
+              <div key={i} class={`message-wrapper ${m.role}`}>
+                <div class={`message ${m.role}`}>
+                  {m.role === 'assistant' && (
+                    <div class="avatar">
+                      <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                      </svg>
+                    </div>
+                  )}
+                  <div class="message-content">
+                    {m.content}
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+
+          {busy && (
+            <div class="message-wrapper assistant">
+              <div class="message assistant">
+                <div class="avatar">
+                  <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" fill="none" />
+                  </svg>
+                </div>
+                <div class="message-content">
+                  <div class="typing-indicator">
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                    <div class="typing-dot"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+          <div ref={endOfMessagesRef} />
+        </div>
       </div>
-      <form onSubmit={send} style="display:flex;gap:0.5rem;margin-top:0.75rem">
-        <input
-          type="text"
-          value={input}
-          onInput={(e) => setInput((e.target as HTMLInputElement).value)}
-          placeholder="How do I run product X?"
-          style="flex:1;padding:0.5rem;border:1px solid #ccc;border-radius:6px"
-          disabled={busy}
-        />
-        <button
-          type="submit"
-          disabled={busy}
-          style="padding:0.5rem 1rem;border-radius:6px;border:0;background:#111;color:#fff;cursor:pointer"
-        >
-          {busy ? '…' : 'Send'}
-        </button>
-      </form>
+
+      <div class="input-container">
+        <div class="input-box">
+          <textarea
+            ref={textareaRef}
+            class="input-textarea"
+            value={input}
+            onInput={handleInput}
+            onKeyDown={handleKeyDown}
+            placeholder="Ask about a product or feature..."
+            disabled={busy}
+            rows={1}
+          />
+          <button
+            class="send-button"
+            onClick={send}
+            disabled={busy || !input.trim()}
+            title="Send message"
+          >
+            <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            </svg>
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
