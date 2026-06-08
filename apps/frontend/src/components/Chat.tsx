@@ -4,6 +4,8 @@
  * the FastAPI backend's /api/chat SSE endpoint.
  */
 import { useState, useRef, useEffect } from 'preact/hooks';
+import DOMPurify from 'dompurify';
+import { marked } from 'marked';
 import './Chat.css';
 
 type Message = { role: 'user' | 'assistant'; content: string };
@@ -76,7 +78,7 @@ export default function Chat() {
   return (
     <div class="app-container">
       <header class="header">
-        <h1>Frontend Agent</h1>
+        <h1>Product Agent</h1>
       </header>
 
       <div class="chat-container">
@@ -84,7 +86,7 @@ export default function Chat() {
           {messages.length === 0 ? (
             <div class="welcome-message">
               <h2>Hello, Gaes</h2>
-              <p>How can I help you with PortrAI documentation today?</p>
+              <p>How can I help you with Product documentation today?</p>
             </div>
           ) : (
             messages.map((m, i) => (
@@ -97,9 +99,16 @@ export default function Chat() {
                       </svg>
                     </div>
                   )}
-                  <div class="message-content">
-                    {m.content}
-                  </div>
+                  {m.role === 'assistant' ? (
+                    <div
+                      class="message-content markdown-body"
+                      dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(marked.parse(m.content) as string) }}
+                    />
+                  ) : (
+                    <div class="message-content">
+                      {m.content}
+                    </div>
+                  )}
                 </div>
               </div>
             ))

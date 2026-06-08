@@ -1,5 +1,6 @@
 /* Chat.css */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&display=swap');
 
 :root {
   --bg-primary: #ffffff;
@@ -13,6 +14,7 @@
   --agent-msg-bg: transparent;
   --input-bg: #f0f4f9;
   --input-focus-bg: #ffffff;
+  --code-bg: #f1f3f4;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -28,6 +30,7 @@
     --agent-msg-bg: transparent;
     --input-bg: #1e1e20;
     --input-focus-bg: #282a2c;
+    --code-bg: #282a2c;
   }
 }
 
@@ -100,6 +103,7 @@ html, body {
   background: linear-gradient(74deg, #4285f4 0, #9b72cb 9%, #d96570 20%, #d96570 24%, #9b72cb 35%, #4285f4 44%, #9b72cb 50%, #d96570 56%, #131314 75%, #131314 100%);
   background-size: 400% 100%;
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
   animation: gradient 8s ease infinite;
 }
@@ -109,6 +113,7 @@ html, body {
     background: linear-gradient(74deg, #a8c7fa 0, #c58af9 9%, #f28b82 20%, #f28b82 24%, #c58af9 35%, #a8c7fa 44%, #c58af9 50%, #f28b82 56%, #e3e3e3 75%, #e3e3e3 100%);
     background-size: 400% 100%;
     -webkit-background-clip: text;
+    background-clip: text;
     -webkit-text-fill-color: transparent;
   }
 }
@@ -153,6 +158,7 @@ html, body {
 .message.assistant {
   background-color: var(--agent-msg-bg);
   padding: 8px 0;
+  max-width: 90%;
 }
 
 .avatar {
@@ -187,6 +193,79 @@ html, body {
 
 .message-content p:last-child {
   margin: 0;
+}
+
+/* Markdown Styles */
+.markdown-body {
+  white-space: normal;
+}
+
+.markdown-body p {
+  margin-bottom: 1em;
+}
+
+.markdown-body a {
+  color: var(--accent-color);
+  text-decoration: none;
+}
+
+.markdown-body a:hover {
+  text-decoration: underline;
+}
+
+.markdown-body code {
+  font-family: 'Fira Code', monospace;
+  background-color: var(--code-bg);
+  padding: 0.2em 0.4em;
+  border-radius: 4px;
+  font-size: 0.85em;
+}
+
+.markdown-body pre {
+  background-color: var(--code-bg);
+  padding: 16px;
+  border-radius: 8px;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+
+.markdown-body pre code {
+  background-color: transparent;
+  padding: 0;
+  font-size: 0.9em;
+  color: var(--text-primary);
+}
+
+.markdown-body ul, .markdown-body ol {
+  margin-bottom: 1em;
+  padding-left: 2em;
+}
+
+.markdown-body li {
+  margin-bottom: 0.5em;
+}
+
+.markdown-body blockquote {
+  border-left: 4px solid var(--border-color);
+  margin: 0 0 1em 0;
+  padding-left: 1em;
+  color: var(--text-secondary);
+}
+
+.markdown-body table {
+  border-collapse: collapse;
+  width: 100%;
+  margin-bottom: 1em;
+}
+
+.markdown-body th, .markdown-body td {
+  border: 1px solid var(--border-color);
+  padding: 8px 12px;
+  text-align: left;
+}
+
+.markdown-body th {
+  background-color: var(--bg-secondary);
 }
 
 /* Loading Animation */
