@@ -28,6 +28,7 @@ app.add_middleware(
         f"http://localhost:{settings.frontend_port}",
         f"http://127.0.0.1:{settings.frontend_port}",
     ],
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,3 +71,18 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
         yield {"event": "done", "data": session_id}
 
     return EventSourceResponse(event_stream())
+
+class PortraiAgentRequest(BaseModel):
+    query: str
+
+@app.post("/api/portrai-cms-agent")
+async def portrai_cms_agent_endpoint(req: PortraiAgentRequest) -> dict[str, str]:
+    from .portrai_cms_agent import portrai_agent
+    try:
+        # Panggilan blocking. Untuk performa ideal di FastAPI, bisa menggunakan run_in_threadpool
+        response = portrai_agent.get_response(req.query)
+        return {"response": response}
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return {"error": str(e)}

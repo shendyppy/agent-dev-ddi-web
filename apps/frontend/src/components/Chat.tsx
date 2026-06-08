@@ -24,38 +24,20 @@ export default function Chat() {
     setBusy(true);
 
     try {
-      const res = await fetch(`${API_BASE}/api/chat`, {
+      const res = await fetch(`${API_BASE}/api/portrai-cms-agent`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: next }),
+        body: JSON.stringify({ query: input }),
       });
 
-      if (!res.ok || !res.body) {
+      if (!res.ok) {
         throw new Error(`HTTP ${res.status}`);
       }
 
-      // Minimal SSE-ish reader — backend emits `event: <name>\ndata: <text>\n\n`.
-      // For v1 we just accumulate `data:` lines as the assistant message.
-      const reader = res.body.getReader();
-      const decoder = new TextDecoder();
-      let acc = '';
-      setMessages([...next, { role: 'assistant', content: '' }]);
+      const data = await res.json();
+      const assistantMessage = data.response || data.error || 'No response';
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        acc += decoder.decode(value, { stream: true });
-        const dataLines = acc
-          .split('\n')
-          .filter((l) => l.startsWith('data:'))
-          .map((l) => l.slice(5).trim());
-        const merged = dataLines.join('\n');
-        setMessages((prev) => {
-          const copy = [...prev];
-          copy[copy.length - 1] = { role: 'assistant', content: merged };
-          return copy;
-        });
-      }
+      setMessages([...next, { role: 'assistant', content: assistantMessage }]);
     } catch (err) {
       setMessages((prev) => [
         ...prev,
