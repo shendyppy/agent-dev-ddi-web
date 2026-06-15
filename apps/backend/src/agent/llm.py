@@ -14,7 +14,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 import litellm
-from langfuse.decorators import langfuse_context, observe
+from langfuse import get_client, observe
 
 from .settings import settings
 
@@ -32,7 +32,8 @@ async def acompletion(
 ) -> Any:
     """Async LLM call. Returns the LiteLLM response (or async iterator if stream=True)."""
     model = model or settings.litellm_model
-    langfuse_context.update_current_observation(model=model, input=messages)
+    langfuse = get_client()
+    langfuse.update_current_generation(model=model, input=messages)
 
     response = await litellm.acompletion(
         model=model,
@@ -43,7 +44,7 @@ async def acompletion(
     )
 
     if not stream:
-        langfuse_context.update_current_observation(output=response)
+        langfuse.update_current_generation(output=response)
     return response
 
 

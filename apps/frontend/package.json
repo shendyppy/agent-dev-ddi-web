@@ -15,5 +15,8 @@
     "astro": "^6.3.7",
     "@astrojs/preact": "^4.0.0",
     "preact": "^10.24.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["esbuild", "sharp"]
   }
 }
