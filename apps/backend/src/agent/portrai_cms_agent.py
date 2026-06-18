@@ -2,6 +2,7 @@ import os
 import re
 import numpy as np
 from google import genai
+from google.genai import types
 from .settings import REPO_ROOT
 
 def cosine_similarity(a, b):
@@ -12,19 +13,36 @@ def cosine_similarity(a, b):
         return 0.0
     return np.dot(a, b) / (norm_a * norm_b)
 
-def load_and_chunk_document(file_path):
-    """Membaca dokumen dan memecahnya menjadi bagian (chunks) berdasarkan heading markdown."""
-    with open(file_path, 'r', encoding='utf-8') as f:
-        text = f.read()
+def load_and_chunk_document(folder_path):
+    """Membaca semua file .md dari sebuah folder dan memecahnya menjadi bagian (chunks) berdasarkan heading markdown.
     
-    # Memecah berdasarkan heading markdown (## atau ###) agar konteks section tetap utuh
-    chunks = re.split(r'\n(?=#{2,3} )', text)
-    return [c.strip() for c in chunks if c.strip()]
+    Dengan membaca seluruh folder, kita bisa menambahkan file doc-context baru
+    tanpa perlu mengubah kode — cukup taruh file .md baru di folder tersebut.
+    """
+    all_chunks = []
+    
+    md_files = sorted(folder_path.glob("*.md"))
+    if not md_files:
+        raise FileNotFoundError(f"Tidak ada file .md ditemukan di folder {folder_path}")
+    
+    for md_file in md_files:
+        print(f"[RAG] Loading document: {md_file.name}")
+        with open(md_file, 'r', encoding='utf-8') as f:
+            text = f.read()
+        
+        # Memecah berdasarkan heading markdown (## atau ###) agar konteks section tetap utuh
+        chunks = re.split(r'\n(?=#{2,3} )', text)
+        file_chunks = [c.strip() for c in chunks if c.strip()]
+        all_chunks.extend(file_chunks)
+    
+    print(f"[RAG] Total {len(all_chunks)} chunks loaded from {len(md_files)} file(s)")
+    return all_chunks
 
 class PortraiCMSAgent:
     def __init__(self):
-        self.doc_path = REPO_ROOT / "docs" / "doc-context.md"
+        self.docs_folder = REPO_ROOT / "docs" / "knowledge-base"
         self.chunks = []
+        # CEK DULU DATABASE EMBEDDING, JIKA SUDAH ADA MAKA LOAD, JIKA BELUM MAKA PROSES EMBEDDING DOKUMEN
         self.chunk_embeddings = []
         self.client = None
         self.chat_session = None
@@ -32,8 +50,8 @@ class PortraiCMSAgent:
         self.system_instruction = (
             "Anda adalah asisten AI yang ramah dan cerdas. "
             "Anda sedang berinteraksi dalam sebuah percakapan, jadi ingatlah selalu identitas pengguna dan histori chat sebelumnya. "
-            "Pada setiap pesan pengguna, sistem mungkin akan menyertakan 'Konteks Tambahan' dari dokumen panduan PortrAI CMS. "
-            "Gunakan konteks tambahan tersebut HANYA JIKA relevan untuk menjawab pertanyaan tentang sistem PortrAI CMS atau DDI. "
+            "Pada setiap pesan pengguna, sistem mungkin akan menyertakan 'Konteks Tambahan' dari dokumen panduan PortrAI. "
+            "Gunakan konteks tambahan tersebut HANYA JIKA relevan untuk menjawab pertanyaan tentang sistem PortrAI (CMS maupun Participant) atau DDI. "
             "Jika pengguna menanyakan hal di luar konteks dokumen (misalnya tentang diri mereka, atau obrolan santai), "
             "jawablah secara natural berdasarkan histori percakapan atau pengetahuan umum Anda, tanpa perlu menyebutkan "
             "bahwa itu di luar dokumen resmi (kecuali jika benar-benar ditanya tentang fakta spesifik perusahaan). "
@@ -42,26 +60,42 @@ class PortraiCMSAgent:
         )
 
     def _initialize(self):
-        if self.client is not None:
+        if self.client is not None and self.chat_session is not None:
             return # Sudah terinisialisasi
         
         # Inisialisasi Google GenAI client (akan secara otomatis mengambil dari environment GEMINI_API_KEY)
         # Jika environment GEMINI_API_KEY tidak ada atau belum valid, harap pastikan sudah diset
-        self.client = genai.Client()
+        api_key = os.environ.get("GEMINI_API_KEY")
+        if not api_key:
+            env_path = REPO_ROOT / ".env"
+            if env_path.exists():
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        if line.strip().startswith("GEMINI_API_KEY="):
+                            val = line.strip().split("=", 1)[1].strip()
+                            if val.startswith(('"', "'")) and val.endswith(('"', "'")):
+                                val = val[1:-1]
+                            if val:
+                                api_key = val
+                            break
         
-        if not self.doc_path.exists():
-            raise FileNotFoundError(f"Dokumen konteks {self.doc_path} tidak ditemukan.")
+        if api_key:
+            self.client = genai.Client(api_key=api_key)
+        else:
+            self.client = genai.Client()
+        
+        if not self.docs_folder.exists() or not self.docs_folder.is_dir():
+            raise FileNotFoundError(f"Folder dokumen konteks {self.docs_folder} tidak ditemukan.")
             
-        self.chunks = load_and_chunk_document(self.doc_path)
+        self.chunks = load_and_chunk_document(self.docs_folder)
         
-        # Mendapatkan embeddings untuk isi dokumen
-        self.chunk_embeddings = []
-        for chunk in self.chunks:
-            resp = self.client.models.embed_content(
-                model='gemini-embedding-2',
-                contents=chunk,
-            )
-            self.chunk_embeddings.append(resp.embeddings[0].values)
+        # Mendapatkan embeddings untuk isi dokumen secara batch (untuk performa dan menghindari rate limit/503)
+        contents = [types.Content(parts=[types.Part.from_text(text=c)]) for c in self.chunks]
+        resp = self.client.models.embed_content(
+            model='gemini-embedding-2',
+            contents=contents,
+        )
+        self.chunk_embeddings = [emb.values for emb in resp.embeddings]
         
         # Inisialisasi sesi Gemini Chat (opsional bisa dibuat per session/request, di sini 1 session global untuk kesederhanaan)
         self.chat_session = self.client.chats.create(
