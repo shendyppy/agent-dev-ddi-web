@@ -32,7 +32,7 @@ install-e2e:
 
 # Start FE + BE concurrently (uses pnpm concurrently script under the hood)
 dev:
-    pnpm exec concurrently -n "be,fe" -c "blue,magenta" "just dev-be" "just dev-fe"
+    npx concurrently -n "be,fe" -c "blue,magenta" "just dev-be" "just dev-fe"
 
 dev-fe:
     cd apps/frontend; pnpm dev
