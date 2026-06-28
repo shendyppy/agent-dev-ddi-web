@@ -21,8 +21,12 @@ class Settings(BaseSettings):
     )
 
     # LLM
-    litellm_model: str = "claude-sonnet-4-6"
+    # All providers go through LiteLLM (see ADR 0003) — set LITELLM_MODEL
+    # to switch and provide the matching key below. Unused keys are fine.
+    # Full provider list + format examples: .env.example.
+    litellm_model: str = "gemini-2.5-flash"
     anthropic_api_key: str | None = None
+    gemini_api_key: str | None = None
     openai_api_key: str | None = None
 
     # Vector store

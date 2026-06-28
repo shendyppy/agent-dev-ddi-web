@@ -4,6 +4,7 @@ version: 1
 inputs:
   query: "string — natural-language search query"
   top_k: "integer (default 5) — number of chunks to return"
+  product_id: "string (optional) — restrict results to one product's docs; omit to search all"
 outputs:
   chunks:
     - text: "string — the chunk content"

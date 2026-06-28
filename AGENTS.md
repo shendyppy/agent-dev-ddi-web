@@ -60,6 +60,7 @@ Why: future-you (and future-AI) needs to know *why*, not just *what*.
 |---|---|
 | System overview | [`docs/architecture.md`](docs/architecture.md) |
 | Why we chose X | [`docs/adr/`](docs/adr/) |
+| How-to / patterns explained | [`docs/guides/`](docs/guides/) |
 | List of products we document | [`docs/product-catalog.md`](docs/product-catalog.md) |
 | Main agent loop | [`apps/backend/src/agent/graph.py`](apps/backend/src/agent/graph.py) |
 | LLM client (always go through this) | [`apps/backend/src/agent/llm.py`](apps/backend/src/agent/llm.py) |

@@ -1,66 +1,454 @@
-"""ChromaDB indexer.
+"""ChromaDB indexer — the RAG corpus builder.
 
-Run via `just index`. Walks configured source paths, parses frontmatter,
-chunks by heading + recursive character split, embeds with fastembed,
-persists to `.data/chroma/`.
+This module is run via ``just index``. It walks every documentation source we
+care about, splits each file into retrievable chunks, embeds the chunks with
+fastembed (a Rust-backed ONNX runner — no API key, no cost), and persists
+them to ChromaDB on disk at ``.data/chroma/``.
 
-Sources:
-- docs/products/**/*.md        ← per-product docs (the bulk of the corpus)
-- docs/product-catalog.md       ← short index, indexed too for broad queries
-- docs/architecture.md          ← so the agent can answer about itself
+It is the canonical reference for *how* RAG ingestion works in this repo. If
+you ever need to index a new corpus (a different folder, a different file
+type), copy this file's *shape* — discover → chunk → embed → upsert.
 
-Per ADR 0004: ChromaDB + fastembed. Per ADR 0006: product docs follow a
-strict format with frontmatter — the indexer reads frontmatter into chunk
-metadata for filtered retrieval (e.g. `product_id=foo`).
+Where this fits in the bigger picture
+-------------------------------------
+
+::
+
+    indexing.py  (this file, run ad-hoc)         ──upserts──▶  ChromaDB
+                                                                  │
+    search_docs MCP server (handler.py)          ──queries──────▶ │
+                                                                  ▼
+    LangGraph agent (graph.py) ──tool_call──▶ search_docs ──▶ chunks ──▶ LLM
+
+Decisions encoded here (do not change without an ADR):
+
+- **Vector store** = ChromaDB persistent client → see ADR 0004.
+- **Embedding model** = fastembed ``BAAI/bge-small-en-v1.5`` → see ADR 0004.
+- **Chunking** = MarkdownHeaderTextSplitter first (so chunks respect section
+  boundaries), then RecursiveCharacterTextSplitter to cap chunk size. See ADR
+  0004 for the ~800-token / 100-overlap target.
+- **Chunk ID** = deterministic ``"<source>::<chunk_index>"`` so re-running
+  ``just index`` is idempotent. Stale chunks from deleted source files are
+  pruned at the end of each run.
+- **Indexed sources** = (1) top-level docs (``architecture.md``, the
+  catalog), (2) per-product docs under ``docs/products/`` (the canonical
+  format described in ``PRODUCT-DOC-FORMAT.md``), and (3) the legacy
+  free-form ``docs/knowledge-base/`` corpus — kept indexed during/after the
+  Path B retirement (ADR 0007) so PortrAI users do not lose answers while we
+  reshape that content into the product format.
+
+How to extend
+-------------
+
+- **Index a new folder** → add it to :data:`SOURCE_DISCOVERERS`.
+- **Change chunk size** → adjust :data:`CHUNK_TARGET_CHARS` /
+  :data:`CHUNK_OVERLAP_CHARS` (keep the ADR in sync).
+- **Swap embedding model** → change :data:`EMBEDDING_MODEL_NAME` and re-run
+  ``just reindex`` (full drop + rebuild — embeddings from different models
+  are not interchangeable).
+- **Swap vector store** (e.g. to Qdrant) → write a new ADR first, then
+  rewrite :func:`build_index` against the new client. The chunking + metadata
+  logic above the upsert call should remain unchanged.
 """
 
 from __future__ import annotations
 
+import re
+from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
+
+import frontmatter
+from chromadb import PersistentClient
+from chromadb.api.models.Collection import Collection
+from fastembed import TextEmbedding
+from langchain_text_splitters import (
+    MarkdownHeaderTextSplitter,
+    RecursiveCharacterTextSplitter,
+)
 
 from .settings import REPO_ROOT, settings
 
+# ─── Constants ────────────────────────────────────────────────────────────
+# These are the knobs you might tune. Bigger changes belong in an ADR.
+
 DOCS_ROOT = REPO_ROOT / "docs"
 PRODUCTS_DIR = DOCS_ROOT / "products"
+KNOWLEDGE_BASE_DIR = DOCS_ROOT / "knowledge-base"
 
-# Top-level files indexed in addition to per-product docs.
-TOP_LEVEL_SOURCES: list[Path] = [
-    DOCS_ROOT / "product-catalog.md",
-    DOCS_ROOT / "architecture.md",
+# fastembed model. Quality "good enough" for technical docs; upgrade path
+# (Voyage / OpenAI) is documented in ADR 0004.
+EMBEDDING_MODEL_NAME = "BAAI/bge-small-en-v1.5"
+
+# ChromaDB collection name. One collection per logical corpus. We only have
+# one corpus today; if we ever isolate per-product retrieval, give each
+# product its own collection here.
+COLLECTION_NAME = "docs"
+
+# Chunk size targets. ADR 0004 specifies ~800 tokens / 100 overlap. We
+# express that in characters because the splitter is character-based, using
+# the ~4-chars-per-token rule of thumb for cl100k_base.
+CHUNK_TARGET_CHARS = 3200
+CHUNK_OVERLAP_CHARS = 400
+
+# Heading-level boundaries the markdown splitter respects. We treat h1–h3
+# as section boundaries; deeper headings (h4+) stay inline so micro-sections
+# don't fragment.
+MARKDOWN_HEADERS_TO_SPLIT_ON = [
+    ("#", "h1"),
+    ("##", "h2"),
+    ("###", "h3"),
 ]
 
 
+# ─── Source discovery ────────────────────────────────────────────────────
+# Each discoverer returns a list of files to index. Add a new function here
+# (and append it to SOURCE_DISCOVERERS below) to bring a new corpus online.
+
+
+def discover_top_level_docs() -> list[Path]:
+    """Repo-level docs the agent should be able to answer about itself.
+
+    These are not per-product — they describe the system as a whole.
+    """
+    candidates = [
+        DOCS_ROOT / "product-catalog.md",
+        DOCS_ROOT / "architecture.md",
+    ]
+    return [p for p in candidates if p.exists()]
+
+
 def discover_product_docs() -> list[Path]:
-    """Return every .md under docs/products/, skipping the _template folder."""
+    """Every ``.md`` under ``docs/products/`` except the ``_template`` folder.
+
+    The template would otherwise pollute retrieval with literal placeholder
+    text ("e.g., Node 22+, Python 3.11+"). Skip it explicitly.
+    """
     if not PRODUCTS_DIR.exists():
         return []
-    return [
-        p
-        for p in PRODUCTS_DIR.rglob("*.md")
-        if "_template" not in p.parts
-    ]
+    return [p for p in PRODUCTS_DIR.rglob("*.md") if "_template" not in p.parts]
+
+
+def discover_knowledge_base() -> list[Path]:
+    """The legacy free-form corpus the old PortrAI path used.
+
+    Indexed as-is until it gets reshaped into the per-product format (ADR
+    0007 tracks this as follow-up, not a blocker). Without this discoverer,
+    every PortrAI answer would silently degrade after the cutover.
+    """
+    if not KNOWLEDGE_BASE_DIR.exists():
+        return []
+    return list(KNOWLEDGE_BASE_DIR.glob("*.md"))
+
+
+SOURCE_DISCOVERERS: list[Callable[[], list[Path]]] = [
+    discover_top_level_docs,
+    discover_product_docs,
+    discover_knowledge_base,
+]
+
+
+# ─── Chunking ────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class IndexedChunk:
+    """One row destined for ChromaDB.
+
+    Kept as a frozen dataclass (not a Pydantic model) because nothing crosses
+    a process boundary here — this is internal-only data flowing into the
+    upsert call. Pydantic would just add ceremony.
+    """
+
+    chunk_id: str
+    text: str
+    metadata: dict[str, Any]
+
+
+def _relative_source(path: Path) -> str:
+    """Stable string identifier for a source file (used in chunk IDs).
+
+    Always relative to ``REPO_ROOT`` and POSIX-style — so the same chunk
+    keeps the same ID across Windows / macOS / Linux contributors.
+    """
+    return path.resolve().relative_to(REPO_ROOT).as_posix()
+
+
+def _slugify(text: str) -> str:
+    """Lowercase + hyphenate a string into a stable product id.
+
+    ``"PortrAI CMS (copy)"`` → ``"portrai-cms-copy"``. Used as the fallback
+    id for knowledge-base files that don't declare one in frontmatter, so the
+    same file always maps to the same product_id across reindex runs.
+    """
+    return re.sub(r"[^a-z0-9]+", "-", text.strip().lower()).strip("-")
+
+
+def _infer_product_id(path: Path, fm_metadata: dict[str, Any]) -> str | None:
+    """Resolve the product id for a source file.
+
+    Resolution order (first hit wins):
+
+    1. Frontmatter ``product_id:`` or ``id:`` — authoritative. PRODUCT-DOC-FORMAT
+       requires it for product docs; knowledge-base files may opt in to a clean
+       id this way (recommended for nice display/filtering).
+    2. ``docs/products/<id>/…`` — the folder name *is* the id (handles
+       ``runbook.md`` and other frontmatter-less files under a product folder).
+    3. ``docs/knowledge-base/<file>.md`` — the slug of the filename, so each
+       legacy free-form file becomes its own selectable "product" with zero
+       manual setup. Add frontmatter (rule 1) when you want a tidier id.
+
+    Anything else (catalog, architecture) has no product scope → None.
+    """
+    for key in ("product_id", "id"):
+        value = fm_metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    try:
+        rel_parts = path.resolve().relative_to(PRODUCTS_DIR).parts
+        # Only a file *inside* a product folder (docs/products/<id>/…) counts.
+        # A loose .md directly under products/ (e.g. AGENTS.md, the format
+        # guide) is not a product and must not leak into the picker.
+        if len(rel_parts) >= 2:
+            return rel_parts[0]
+    except ValueError:
+        pass
+    try:
+        path.resolve().relative_to(KNOWLEDGE_BASE_DIR)
+        return _slugify(path.stem)
+    except ValueError:
+        pass
+    return None
+
+
+def _infer_product_name(path: Path, fm_metadata: dict[str, Any], body: str) -> str:
+    """Human-readable product label shown in the UI picker.
+
+    Resolution order: frontmatter ``product_name``/``name`` → the document's
+    first ``# H1`` heading → a title-cased version of the filename. We never
+    return empty so the picker chip always has something to render.
+    """
+    for key in ("product_name", "name"):
+        value = fm_metadata.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    h1 = re.search(r"^#\s+(.+?)\s*$", body, re.MULTILINE)
+    if h1:
+        return h1.group(1).strip()
+    return path.stem.replace("-", " ").replace("_", " ").strip().title()
+
+
+def _clean_metadata(raw: dict[str, Any]) -> dict[str, str | int | float | bool]:
+    """Chroma rejects None and non-scalar metadata values.
+
+    Strip Nones, coerce lists → comma-joined strings (so ``tags`` still
+    becomes queryable text), and drop anything else that isn't a primitive.
+    """
+    out: dict[str, str | int | float | bool] = {}
+    for k, v in raw.items():
+        if v is None:
+            continue
+        if isinstance(v, (str, int, float, bool)):
+            out[k] = v
+        elif isinstance(v, (list, tuple)):
+            out[k] = ", ".join(str(item) for item in v)
+        else:
+            out[k] = str(v)
+    return out
+
+
+def chunk_file(path: Path) -> list[IndexedChunk]:
+    """Split one markdown file into RAG-ready chunks.
+
+    Two-pass split:
+
+    1. **MarkdownHeaderTextSplitter** breaks the document at h1/h2/h3
+       boundaries and attaches the heading path as metadata. This is what
+       lets us cite "Section X > Subsection Y" later.
+    2. **RecursiveCharacterTextSplitter** further breaks any oversized
+       section into ~3200-char windows with 400-char overlap, so the LLM
+       always gets coherent context blocks even when one section is huge.
+
+    Metadata attached to every chunk:
+
+    - ``source``: POSIX-relative path (for citations and chunk ID).
+    - ``product_id``: when scoped to a specific product.
+    - Plus any allowlisted frontmatter fields (``name``, ``status``,
+      ``owner``, ``default_url``, ``health_check``, ``tags``, ...).
+    - ``heading_path``: the breadcrumb of headings above the chunk.
+    - ``chunk_index``: ordinal within the file (drives the deterministic ID).
+    """
+    post = frontmatter.load(path)
+    body = post.content
+    if not body.strip():
+        return []
+
+    source = _relative_source(path)
+    product_id = _infer_product_id(path, dict(post.metadata))
+
+    # File-level metadata that every chunk from this file inherits.
+    base_metadata: dict[str, Any] = {"source": source}
+    if product_id:
+        base_metadata["product_id"] = product_id
+        # Carry a display name alongside the id so list_products (and the FE
+        # product picker) can label chips without re-reading source files.
+        base_metadata["product_name"] = _infer_product_name(path, dict(post.metadata), body)
+    # Allowlist of frontmatter fields we promote to chunk metadata. Keep
+    # this short — Chroma metadata is searched/filtered, not body text.
+    for key in ("name", "status", "owner", "default_url", "health_check", "tags"):
+        if key in post.metadata:
+            base_metadata[key] = post.metadata[key]
+
+    header_splitter = MarkdownHeaderTextSplitter(
+        headers_to_split_on=MARKDOWN_HEADERS_TO_SPLIT_ON,
+        strip_headers=False,  # keep headings in the chunk so retrieval sees them
+    )
+    section_docs = header_splitter.split_text(body)
+
+    char_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_TARGET_CHARS,
+        chunk_overlap=CHUNK_OVERLAP_CHARS,
+    )
+
+    chunks: list[IndexedChunk] = []
+    for section in section_docs:
+        # Build a "h1 > h2 > h3" breadcrumb from whatever headers were
+        # collected for this section. Use only the levels that actually
+        # exist so we don't show an empty trailing arrow.
+        heading_path = " > ".join(
+            section.metadata[h]
+            for _, h in MARKDOWN_HEADERS_TO_SPLIT_ON
+            if h in section.metadata
+        )
+        section_meta = {**base_metadata}
+        if heading_path:
+            section_meta["heading_path"] = heading_path
+
+        for piece in char_splitter.split_text(section.page_content):
+            chunk_index = len(chunks)
+            chunks.append(
+                IndexedChunk(
+                    chunk_id=f"{source}::{chunk_index}",
+                    text=piece,
+                    metadata=_clean_metadata({**section_meta, "chunk_index": chunk_index}),
+                )
+            )
+
+    return chunks
+
+
+# ─── Embedding + upsert ──────────────────────────────────────────────────
+
+
+def _get_collection(client: PersistentClient) -> Collection:
+    """Always return the docs collection — created on first run, reused after.
+
+    No ``embedding_function=`` argument is passed because we compute
+    embeddings ourselves (see :func:`_embed_texts`). That keeps the choice
+    of embedder explicit and visible at the call site rather than hidden in
+    Chroma's defaults.
+    """
+    return client.get_or_create_collection(name=COLLECTION_NAME)
+
+
+def _embed_texts(texts: Iterable[str]) -> list[list[float]]:
+    """Run fastembed over a list of strings.
+
+    First call downloads the ONNX model (~50MB) and caches it under
+    ``~/.cache/fastembed/`` — the first ``just index`` is therefore slower
+    than later runs. No network calls after that.
+    """
+    model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
+    # ``embed`` returns numpy arrays; ChromaDB accepts plain lists. Convert
+    # explicitly so the call site doesn't lug numpy types around.
+    return [vec.tolist() for vec in model.embed(list(texts))]
+
+
+def _prune_stale_chunks(collection: Collection, current_ids: set[str]) -> int:
+    """Remove chunks from the collection whose IDs are no longer produced.
+
+    Without this step, deleting a doc file would leave its chunks stranded
+    in the index — they would still be returned by retrieval. Run after
+    every upsert so the corpus mirrors what's on disk.
+
+    Returns the number of chunks deleted (for logging).
+    """
+    existing = collection.get(include=[])  # only need IDs
+    stale = [cid for cid in existing.get("ids", []) if cid not in current_ids]
+    if stale:
+        collection.delete(ids=stale)
+    return len(stale)
+
+
+# ─── Public entry point ──────────────────────────────────────────────────
 
 
 def build_index() -> None:
-    """Build (or rebuild) the ChromaDB index from configured sources."""
-    settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+    """End-to-end indexing run — what ``just index`` calls.
 
-    product_docs = discover_product_docs()
-    all_sources = TOP_LEVEL_SOURCES + product_docs
+    Idempotent: running twice on an unchanged corpus produces an unchanged
+    index (same IDs, same content). Stale chunks from deleted files are
+    pruned at the end.
+
+    Not transactional: a crash midway leaves the collection partially
+    updated. Re-running is safe — the upsert will catch up.
+    """
+    settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+    client = PersistentClient(path=str(settings.chroma_persist_dir))
+    collection = _get_collection(client)
+
+    # 1. Discover all source files across every registered corpus.
+    sources: list[Path] = []
+    for discover in SOURCE_DISCOVERERS:
+        sources.extend(discover())
 
     print(f"[indexing] persist dir: {settings.chroma_persist_dir}")
-    print(f"[indexing] top-level sources: {len(TOP_LEVEL_SOURCES)}")
-    print(f"[indexing] product doc files: {len(product_docs)}")
-    print(f"[indexing] total files: {len(all_sources)}")
+    print(f"[indexing] source files: {len(sources)}")
 
-    # TODO:
-    #  1. For each file: read content, parse frontmatter (python-frontmatter)
-    #  2. Split body by markdown headings, then by recursive character splitter (800 / 100)
-    #  3. Attach metadata to each chunk: {source, product_id, feature_id, heading_path, status}
-    #  4. Embed with fastembed (BAAI/bge-small-en-v1.5)
-    #  5. Upsert into chromadb.PersistentClient(path=settings.chroma_persist_dir)
-    print("[indexing] implementation pending — scaffold only")
+    if not sources:
+        print("[indexing] no source files found — nothing to do")
+        return
+
+    # 2. Chunk every file. We hold all chunks in memory because the corpus
+    #    is small (hundreds of files, not millions). If that ever changes,
+    #    stream this loop and upsert in batches per file.
+    all_chunks: list[IndexedChunk] = []
+    for path in sources:
+        file_chunks = chunk_file(path)
+        all_chunks.extend(file_chunks)
+        print(f"[indexing] {_relative_source(path)} → {len(file_chunks)} chunk(s)")
+
+    if not all_chunks:
+        print("[indexing] discovered files but every one was empty — nothing to upsert")
+        return
+
+    print(f"[indexing] total chunks: {len(all_chunks)}")
+    print(f"[indexing] embedding with {EMBEDDING_MODEL_NAME} (first run downloads model)...")
+
+    # 3. Embed. Done in one batch so fastembed can parallelise internally.
+    embeddings = _embed_texts(chunk.text for chunk in all_chunks)
+
+    # 4. Upsert into Chroma. Deterministic IDs make this idempotent.
+    collection.upsert(
+        ids=[chunk.chunk_id for chunk in all_chunks],
+        documents=[chunk.text for chunk in all_chunks],
+        metadatas=[chunk.metadata for chunk in all_chunks],
+        embeddings=embeddings,
+    )
+
+    # 5. Drop chunks from files that no longer exist or were renamed.
+    stale_removed = _prune_stale_chunks(
+        collection, current_ids={chunk.chunk_id for chunk in all_chunks}
+    )
+    if stale_removed:
+        print(f"[indexing] pruned {stale_removed} stale chunk(s) from deleted/renamed files")
+
+    print(f"[indexing] done — collection '{COLLECTION_NAME}' now has "
+          f"{collection.count()} chunk(s)")
 
 
 if __name__ == "__main__":
+    # Entry point for ``just index`` (which runs ``python -m agent.indexing``).
+    # Keep this block tiny — orchestration of the index lives in build_index().
     build_index()

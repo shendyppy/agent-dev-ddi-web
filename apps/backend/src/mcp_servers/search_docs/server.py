@@ -10,14 +10,20 @@ mcp = FastMCP("search_docs")
 
 
 @mcp.tool()
-async def search_documentation(query: str, top_k: int = 5) -> dict:
+async def search_documentation(
+    query: str, top_k: int = 5, product_id: str | None = None
+) -> dict:
     """Semantic search over internal documentation.
 
     Use this FIRST for any user question about a product, feature, how to
     run something, or anything that might be in our docs. Retrieve evidence
     before answering.
+
+    Pass ``product_id`` to restrict the search to one product's docs. When the
+    user is focused on a specific product, prefer scoping with it; omit it only
+    when the question spans products or asks to compare them.
     """
-    result = await handle(SearchInput(query=query, top_k=top_k))
+    result = await handle(SearchInput(query=query, top_k=top_k, product_id=product_id))
     return result.model_dump()
 
 

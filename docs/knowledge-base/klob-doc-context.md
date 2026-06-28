@@ -1,3 +1,9 @@
+---
+product_id: klob
+product_name: Klob.id
+status: active
+---
+
 # Klob.id (Klob Frontend) - Feature Context & Guide Document
 
 Dokumen ini berisi rangkuman seluruh fitur yang ada di dalam platform pencarian kerja dan pemetaan potensi diri **Klob.id** beserta panduan fungsional dan teknis alur kerjanya. Dokumen ini dirancang sebagai *context document* untuk membantu agent AI memahami kapabilitas, struktur navigasi, routing, serta modul-modul fungsional yang ada pada aplikasi pencari kerja (jobseeker) Klob.id.

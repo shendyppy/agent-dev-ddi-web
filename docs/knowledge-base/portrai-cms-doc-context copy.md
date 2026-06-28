@@ -1,3 +1,9 @@
+---
+product_id: portrai-cms
+product_name: PortrAI CMS
+status: active
+---
+
 # PortrAI CMS - Feature Context & Tutorial Document
 
 Dokumen ini berisi rangkuman seluruh fitur yang ada di dalam sistem **PortrAI CMS** beserta panduan langkah demi langkah (SOP) cara menggunakannya. Dokumen ini dirancang sebagai *context document* untuk membantu agent AI memahami kapabilitas, struktur, dan modul-modul yang ada di dalam aplikasi ini.
