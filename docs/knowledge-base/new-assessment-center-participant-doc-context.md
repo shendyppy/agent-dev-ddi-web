@@ -1,3 +1,9 @@
+---
+product_id: new-assessment-center-participant
+product_name: New Assessment Center (Participant)
+status: active
+---
+
 # New Assessment Center Participant - Feature Context & Tutorial Document
 
 Dokumen ini berisi rangkuman seluruh fitur yang ada di dalam sistem **New Assessment Center Participant** beserta panduan langkah demi langkah (SOP) cara menggunakannya. Dokumen ini dirancang sebagai _context document_ untuk membantu agent AI memahami kapabilitas, struktur, dan modul-modul yang ada di dalam aplikasi web peserta assessment center.

@@ -12,6 +12,7 @@ Each ADR captures a non-trivial architectural choice with the **Context**, **Dec
 | [0004](0004-rag-stack.md) | RAG stack: ChromaDB + fastembed | Accepted |
 | [0005](0005-deployment-strategy.md) | Deployment: Cloudflare Pages + Fly.io / Docker Compose | Accepted |
 | [0006](0006-product-doc-format.md) | Per-product documentation format | Accepted |
+| [0007](0007-retire-portrai-cms-agent.md) | Retire `portrai_cms_agent.py`, finalize MCP/LangGraph/Chroma path | Accepted |
 
 ## Writing a new ADR
 

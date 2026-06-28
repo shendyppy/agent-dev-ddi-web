@@ -17,6 +17,7 @@ import litellm
 from langfuse import get_client, observe
 
 from .settings import settings
+from .token_killer import prune_to_budget
 
 litellm.set_verbose = False
 
@@ -28,10 +29,18 @@ async def acompletion(
     tools: list[dict[str, Any]] | None = None,
     model: str | None = None,
     stream: bool = False,
+    max_input_tokens: int | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Async LLM call. Returns the LiteLLM response (or async iterator if stream=True)."""
+    """Async LLM call. Returns the LiteLLM response (or async iterator if stream=True).
+
+    If `max_input_tokens` is set, the message list is pruned via token_killer
+    before the call so the request fits within the budget.
+    """
     model = model or settings.litellm_model
+    if max_input_tokens is not None:
+        messages = prune_to_budget(messages, max_tokens=max_input_tokens, model=model)
+
     langfuse = get_client()
     langfuse.update_current_generation(model=model, input=messages)
 
@@ -53,11 +62,17 @@ async def astream(
     *,
     tools: list[dict[str, Any]] | None = None,
     model: str | None = None,
+    max_input_tokens: int | None = None,
     **kwargs: Any,
 ) -> AsyncIterator[Any]:
     """Convenience wrapper for streaming responses."""
     response = await acompletion(
-        messages, tools=tools, model=model, stream=True, **kwargs
+        messages,
+        tools=tools,
+        model=model,
+        stream=True,
+        max_input_tokens=max_input_tokens,
+        **kwargs,
     )
     async for chunk in response:
         yield chunk

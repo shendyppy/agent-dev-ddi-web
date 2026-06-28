@@ -4,5 +4,99 @@ import Chat from '../components/Chat.tsx';
 ---
 
 <Layout>
-  <Chat client:load />
+  {/*
+    client:only — the island is rendered in the browser only. DOMPurify
+    (used at module top-level inside Chat.tsx) is a factory in Node SSR,
+    so we skip SSR for this widget entirely. The slot children below are
+    Astro's documented placeholder for client:only — shown until Preact
+    hydrates, then swapped out. Mirrors the real shell (header / body /
+    composer) so there's no layout shift on hydration.
+  */}
+  <Chat client:only="preact">
+    <div class="chat-skeleton" role="status" aria-label="Loading chat">
+      <header class="chat-skeleton__bar">
+        <span class="chat-skeleton__title" />
+        <span class="chat-skeleton__row">
+          <span class="chat-skeleton__chip" />
+          <span class="chat-skeleton__chip chat-skeleton__chip--lang" />
+        </span>
+      </header>
+      <main class="chat-skeleton__body">
+        <span class="chat-skeleton__bubble" />
+        <span class="chat-skeleton__bubble chat-skeleton__bubble--short" />
+        <span class="chat-skeleton__bubble" />
+      </main>
+      <footer class="chat-skeleton__composer" />
+    </div>
+  </Chat>
 </Layout>
+
+<style>
+  .chat-skeleton {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    background: var(--bg-primary, #fafafa);
+    font-family: var(--font-sans, system-ui, sans-serif);
+  }
+
+  .chat-skeleton__bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--border-color, #e2e2e4);
+  }
+
+  .chat-skeleton__row {
+    display: inline-flex;
+    gap: 8px;
+  }
+
+  .chat-skeleton__title,
+  .chat-skeleton__chip,
+  .chat-skeleton__bubble,
+  .chat-skeleton__composer {
+    background: var(--bg-secondary, #f2f2f3);
+    border-radius: var(--radius-sm, 6px);
+    animation: chat-skeleton-pulse 1.4s ease-in-out infinite;
+  }
+
+  .chat-skeleton__title { width: 140px; height: 14px; }
+
+  .chat-skeleton__chip { width: 90px; height: 20px; border-radius: var(--radius-full, 9999px); }
+  .chat-skeleton__chip--lang { width: 64px; }
+
+  .chat-skeleton__body {
+    flex: 1;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    align-items: flex-start;
+  }
+
+  .chat-skeleton__bubble { width: 60%; height: 14px; }
+  .chat-skeleton__bubble--short { width: 38%; }
+
+  .chat-skeleton__composer {
+    margin: 0 24px 24px;
+    height: 56px;
+    border-radius: var(--radius-md, 10px);
+  }
+
+  @keyframes chat-skeleton-pulse {
+    0%, 100% { opacity: 1; }
+    50%      { opacity: 0.55; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .chat-skeleton__title,
+    .chat-skeleton__chip,
+    .chat-skeleton__bubble,
+    .chat-skeleton__composer {
+      animation: none;
+    }
+  }
+</style>
