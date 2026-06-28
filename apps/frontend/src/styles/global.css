@@ -1,0 +1,142 @@
+/*
+ * global.css — Tailwind v4 entry point + design tokens + CSS islands.
+ *
+ * Token vocabulary follows shadcn/ui (background, foreground, primary, muted,
+ * border, ring, destructive, …) so the ported ui/ components style themselves
+ * with the same utilities they ship with. The values are the Odyssey brand
+ * palette (near-black ink, deep-maroon primary, warm gold accent, cool-light
+ * surfaces), pulled from odyssey.co.id.
+ *
+ * Import ORDER matters:
+ *  1. Google Fonts — before `@import "tailwindcss"` so font requests fire
+ *     before Tailwind's reset sets font-family.
+ *  2. `@import "tailwindcss"` — Preflight + generated utilities.
+ *  3. @theme tokens — each `--color-*` becomes a utility (bg-/text-/border-).
+ *  4. Dark-mode overrides — reassign the same vars so every utility flips
+ *     automatically; no `dark:` prefix needed in markup.
+ *  5. CSS islands — rules for nodes the static scanner can't see
+ *     (dangerouslySetInnerHTML markdown, keyframe-animated typing dots).
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+@theme {
+  /* Surfaces & text */
+  --color-background:            #edf1f6;
+  --color-foreground:            #0b0b0d;
+  --color-card:                  #ffffff;
+  --color-card-foreground:       #0b0b0d;
+  --color-popover:               #ffffff;
+  --color-popover-foreground:    #0b0b0d;
+
+  /* Brand — deep maroon */
+  --color-primary:               #7a0e15;
+  --color-primary-foreground:    #fafafa;
+  --color-primary-soft:          #f5e5e6;  /* tinted fill, e.g. user bubble */
+
+  /* Neutral fills */
+  --color-secondary:             #dce3eb;
+  --color-secondary-foreground:  #0b0b0d;
+  --color-muted:                 #dce3eb;
+  --color-muted-foreground:      #3e4650;
+  --color-accent:                #dce3eb;  /* shadcn "accent" = subtle hover bg */
+  --color-accent-foreground:     #0b0b0d;
+
+  /* Status */
+  --color-destructive:           #c10015;
+  --color-destructive-foreground:#fafafa;
+  --color-success:               #3c8a73;
+  --color-warning:               #ecab2d;
+
+  /* Lines & focus ring */
+  --color-border:                #bdc7d2;
+  --color-input:                 #bdc7d2;
+  --color-ring:                  #7a0e15;
+
+  /* Warm secondary accent — decorative only (fails AA as small text) */
+  --color-gold:                  #a9906e;
+
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius-xs: 2px; --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px; --radius-full: 9999px;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-background:            #0f1115;
+    --color-foreground:            #e8eaed;
+    --color-card:                  #1a1d22;
+    --color-card-foreground:       #e8eaed;
+    --color-popover:               #1a1d22;
+    --color-popover-foreground:    #e8eaed;
+
+    --color-primary:               #ec5252;
+    --color-primary-foreground:    #fafafa;
+    --color-primary-soft:          #2d1415;
+
+    --color-secondary:             #1e2228;
+    --color-secondary-foreground:  #e8eaed;
+    --color-muted:                 #1e2228;
+    --color-muted-foreground:      #9e9e9e;
+    --color-accent:                #1e2228;
+    --color-accent-foreground:     #e8eaed;
+
+    --color-destructive:           #e53935;
+    --color-destructive-foreground:#fafafa;
+    --color-success:               #4da88d;
+    --color-warning:               #f0bc45;
+
+    --color-border:                #2e3540;
+    --color-input:                 #2e3540;
+    --color-ring:                  #ec5252;
+
+    --color-gold:                  #c4a97e;
+  }
+}
+
+/* Markdown (rendered via dangerouslySetInnerHTML — utilities can't reach these) */
+.markdown-body a { color: var(--color-primary); text-underline-offset: 2px; }
+.markdown-body a:hover { color: var(--color-primary); opacity: 0.85; }
+.markdown-body code { font-family: var(--font-mono); background: var(--color-muted); border: 1px solid var(--color-border); border-radius: var(--radius-xs); padding: 0.1em 0.3em; font-size: 0.85em; }
+.markdown-body pre { background: var(--color-muted); border: 1px solid var(--color-border); border-radius: var(--radius-md); padding: 14px 16px; overflow-x: auto; }
+.markdown-body pre code { background: none; border: 0; padding: 0; }
+.markdown-body blockquote { border-left: 3px solid var(--color-gold); padding-left: 1em; color: var(--color-muted-foreground); margin: 0.5em 0; }
+.markdown-body th { background: var(--color-muted); font-weight: 600; }
+.markdown-body table { border-collapse: collapse; }
+.markdown-body th, .markdown-body td { border: 1px solid var(--color-border); padding: 6px 10px; }
+.markdown-body ul, .markdown-body ol { padding-left: 1.25em; }
+.markdown-body :first-child { margin-top: 0; }
+.markdown-body :last-child { margin-bottom: 0; }
+
+/* Typing dots: quiet opacity pulse, no translateY (the bounce reads as "generic AI") */
+@media (prefers-reduced-motion: no-preference) {
+  .typing-dot { animation: typing-fade 1.4s ease-in-out infinite; }
+  .typing-dot:nth-child(2) { animation-delay: 0.22s; }
+  .typing-dot:nth-child(3) { animation-delay: 0.44s; }
+  @keyframes typing-fade { 0%,100% { opacity: 0.25; } 50% { opacity: 0.85; } }
+}
+
+/* ── Motion: entrance + tactile feedback ────────────────────────────
+ * Kept short and gentle. Every animation below is gated behind
+ * prefers-reduced-motion: no-preference, so anyone who opts out of motion
+ * gets an instant, fully static UI. The `.anim-in` class is a one-shot
+ * fade+rise applied to nodes as they mount (chat rows, the welcome hero,
+ * the composer) — Preact keys keep existing nodes stable across re-renders,
+ * so the animation only fires on first mount, not on every keystroke. */
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes ods-fade-rise {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .anim-in {
+    animation: ods-fade-rise 320ms cubic-bezier(0.22, 0.61, 0.36, 1) both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* Reduced-motion users still get the class (so markup is uniform) but it
+     does nothing — content simply appears. */
+  .anim-in { animation: none; }
+}

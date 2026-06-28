@@ -1,3 +1,10 @@
+---
+// global.css is the Tailwind v4 entry point — it contains the @theme tokens,
+// dark-mode overrides, and CSS islands (markdown-body, typing-dot keyframes).
+// It must be imported here (the layout) so it is included in every page's
+// generated bundle and the pre-hydration skeleton can read the CSS variables.
+import '../styles/global.css';
+---
 <!doctype html>
 <html lang="en">
 	<head>

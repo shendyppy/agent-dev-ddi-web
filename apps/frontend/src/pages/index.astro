@@ -32,11 +32,20 @@ import Chat from '../components/Chat.tsx';
 </Layout>
 
 <style>
+  /*
+   * Skeleton styles use the same CSS custom properties emitted by global.css
+   * @theme, so the pre-hydration placeholder matches the live UI exactly.
+   * Fallback literals are set to the light-mode @theme values (step-2).
+   * --font-sans, --radius-sm, --radius-md, --radius-full share the same
+   * token names in both the old Chat.css and the new @theme, so only the
+   * color-related references needed renaming (--bg-primary → --color-surface,
+   * --border-color → --color-border, --bg-secondary → --color-surface-muted).
+   */
   .chat-skeleton {
     display: flex;
     flex-direction: column;
     height: 100vh;
-    background: var(--bg-primary, #fafafa);
+    background: var(--color-background, #edf1f6);
     font-family: var(--font-sans, system-ui, sans-serif);
   }
 
@@ -46,7 +55,7 @@ import Chat from '../components/Chat.tsx';
     justify-content: space-between;
     gap: 16px;
     padding: 14px 24px;
-    border-bottom: 1px solid var(--border-color, #e2e2e4);
+    border-bottom: 1px solid var(--color-border, #bdc7d2);
   }
 
   .chat-skeleton__row {
@@ -58,8 +67,8 @@ import Chat from '../components/Chat.tsx';
   .chat-skeleton__chip,
   .chat-skeleton__bubble,
   .chat-skeleton__composer {
-    background: var(--bg-secondary, #f2f2f3);
-    border-radius: var(--radius-sm, 6px);
+    background: var(--color-muted, #dce3eb);
+    border-radius: var(--radius-sm, 4px);
     animation: chat-skeleton-pulse 1.4s ease-in-out infinite;
   }
 
@@ -83,7 +92,7 @@ import Chat from '../components/Chat.tsx';
   .chat-skeleton__composer {
     margin: 0 24px 24px;
     height: 56px;
-    border-radius: var(--radius-md, 10px);
+    border-radius: var(--radius-md, 8px);
   }
 
   @keyframes chat-skeleton-pulse {
