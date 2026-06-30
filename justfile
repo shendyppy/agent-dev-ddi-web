@@ -77,9 +77,19 @@ mcp-inspect skill:
 test-e2e:
     cd packages/e2e; pnpm exec playwright test
 
-# Trigger a specific screenshot scenario (used by the capture_screenshot skill)
+# Trigger a specific screenshot scenario (used by the capture_screenshot skill).
+# SCREENSHOT_DIR is forced to the backend's screenshot dir so the PNG lands
+# where FastAPI serves /screenshots, regardless of cwd. PowerShell `$env:`
+# syntax because justfile's windows-shell is powershell (bash-style VAR=x
+# would not work) — see CLAUDE.md.
 screenshot scenario:
-    cd packages/e2e; pnpm exec playwright test --grep "{{scenario}}"
+    cd packages/e2e; $env:SCREENSHOT_DIR="{{justfile_directory()}}/.data/screenshots"; pnpm exec playwright test --grep "{{scenario}}"
+
+# Capture an arbitrary live URL on the Acelents site on demand (used by the
+# capture_screenshot skill's `url` path). <slug> becomes the cached filename.
+# Mirrors `screenshot` but feeds CAPTURE_URL/CAPTURE_OUT to the on-demand test.
+screenshot-url url slug:
+    cd packages/e2e; $env:CAPTURE_URL="{{url}}"; $env:CAPTURE_OUT="{{justfile_directory()}}/.data/screenshots/_ondemand/{{slug}}.png"; $env:SCREENSHOT_DIR="{{justfile_directory()}}/.data/screenshots"; pnpm exec playwright test --grep "capture-url"
 
 # ─── Quality ──────────────────────────────────────────────────────────────────
 

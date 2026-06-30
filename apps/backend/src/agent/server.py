@@ -9,6 +9,10 @@ The HTTP surface is intentionally tiny — five endpoints:
 - ``GET /api/meta``          → service metadata (model label) for the FE header.
 - ``GET /api/products``      → product catalogue for the FE picker (scopes chat).
 - ``POST /api/chat`` (SSE)   → the chatbot. Streams agent events as they happen.
+- ``GET /screenshots/{file}``→ static PNGs captured by the ``capture_screenshot``
+                              skill. Mounted from ``settings.screenshot_dir``.
+                              The agent embeds these URLs as markdown images in
+                              its answers; the FE's ``<img>`` fetches them here.
 
 All real work lives in ``agent.graph`` (LangGraph state machine) which fans
 out to ``agent.mcp_clients`` (MCP skill servers) and ``agent.llm`` (LiteLLM
@@ -49,6 +53,7 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
@@ -75,6 +80,19 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+)
+
+# Static screenshots — PNGs produced by the capture_screenshot skill (Playwright)
+# land in settings.screenshot_dir and are served here so the browser can fetch
+# them via the markdown image URL the agent embeds in its answer. Created on
+# startup so a fresh checkout serves an empty dir (404) instead of crashing on
+# the mount. See ADR 0008 for why screenshots flow as image URLs, not a new SSE
+# event type.
+settings.screenshot_dir.mkdir(parents=True, exist_ok=True)
+app.mount(
+    "/screenshots",
+    StaticFiles(directory=str(settings.screenshot_dir)),
+    name="screenshots",
 )
 
 

@@ -1,0 +1,37 @@
+name: acelents-run-instructions
+tags: [prompt:main-agent, skill:search_documentation, product:acelents]
+description: |
+  Regression for a real hallucination on 2026-06-29: asked how to run the
+  Acelents Website locally, the agent (gemini-2.5-flash-lite) invented generic
+  scaffolding — `docker-compose up`, `npm install`, `npm run db:migrate`,
+  `http://localhost:3000` — and cited a non-existent source
+  `/acelents/local-development.md`. Acelents is a static Astro 5 site run with
+  pnpm on port 4321 (see docs/products/acelents/product.md). The agent must
+  ground in those docs and never improvise the stack.
+
+input:
+  # Indonesian, matching how the team actually asks (rule 7 = BI default).
+  messages:
+    - role: user
+      content: "Gimana cara jalanin Acelents Website di lokal?"
+
+expected:
+  must_call_tool:
+    - search_documentation
+  must_contain_any:
+    - "pnpm dev"
+    - "pnpm install"
+  must_not_contain:
+    - "docker-compose"      # invented — Acelents has no Docker
+    - "docker compose"
+    - "db:migrate"          # invented — static site, no DB
+    - "npm install"         # docs use pnpm, not npm
+    - "yarn install"
+    - "localhost:3000"      # wrong port — Astro dev serves 4321
+    - "local-development.md" # fabricated source path
+
+  rubric:
+    - "Run steps are quoted from the Acelents product docs (Astro 5 + pnpm: clone, cd tep-web/apps, pnpm install, pnpm dev), not generic scaffolding."
+    - "Any Sources: line cites only real paths returned by search (e.g. docs/products/acelents/product.md), never an invented file."
+    - "If a local URL/port is mentioned it is the Astro dev port 4321, not 3000."
+    - "Answer is in Bahasa Indonesia (the user asked in Indonesian) and under 200 words."

@@ -15,6 +15,7 @@ Short index of every product the documentation agent can answer about. Detail li
 | ID | Name | Status | Owner | Default URL | Docs |
 |---|---|---|---|---|---|
 | `_template` | (template — not a real product) | — | — | — | [products/_template/](products/_template/) |
+| `acelents` | Acelents Website | active | team-acelents | https://dev.acelents.com | [products/acelents/](products/acelents/) |
 <!-- Insert new rows here as products are added. Example:
 | `example-product` | Example Product | active | team-foo | http://localhost:3000 | [products/example-product/](products/example-product/) |
 -->

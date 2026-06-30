@@ -51,9 +51,7 @@ expected:
 ```
 evals/cases/
 ├── search-docs/         ← retrieval quality
-├── feature-discovery/   ← list_features + get_feature_access_path
-├── run-instructions/    ← get_run_instructions
-├── screenshot/          ← capture_screenshot decision making
+├── capture-screenshot/  ← capture_screenshot decision making
 └── refusal/             ← cases where the agent should refuse / clarify
 ```
 

@@ -32,10 +32,12 @@ Decisions encoded here (do not change without an ADR):
   pruned at the end of each run.
 - **Indexed sources** = (1) top-level docs (``architecture.md``, the
   catalog), (2) per-product docs under ``docs/products/`` (the canonical
-  format described in ``PRODUCT-DOC-FORMAT.md``), and (3) the legacy
-  free-form ``docs/knowledge-base/`` corpus — kept indexed during/after the
-  Path B retirement (ADR 0007) so PortrAI users do not lose answers while we
-  reshape that content into the product format.
+  format described in ``PRODUCT-DOC-FORMAT.md``), (3) the legacy free-form
+  ``docs/knowledge-base/`` corpus — kept indexed during/after the Path B
+  retirement (ADR 0007) so PortrAI users do not lose answers while we reshape
+  that content into the product format, and (4) the external ``tep-web``
+  source corpus (the Acelents website) under ``settings.tep_web_root``,
+  ingested as the ``acelents`` product via :func:`chunk_code_file`.
 
 How to extend
 -------------
@@ -142,10 +144,43 @@ def discover_knowledge_base() -> list[Path]:
     return list(KNOWLEDGE_BASE_DIR.glob("*.md"))
 
 
+def discover_tep_web_source() -> list[Path]:
+    """Source code of the Acelents website (the external ``tep-web`` repo).
+
+    Indexed as the ``acelents`` product so the agent can answer code-level
+    questions about how the site is built (routes, components, tech stack) —
+    not just the curated prose under ``docs/products/acelents/``. External to
+    ``REPO_ROOT`` on purpose: it is a separate project we ingest, located at
+    ``settings.tep_web_root`` (override via the ``TEP_WEB_ROOT`` env var).
+
+    Walks ``apps/src/**/*.{astro,tsx,ts}``, skipping generated/build dirs.
+    Returns an empty list when ``tep_web_root`` is absent, so a checkout
+    without the external repo still indexes the rest of the corpus instead of
+    crashing. The external path is why these files go through
+    :func:`chunk_code_file` rather than the markdown-centric :func:`chunk_file`
+    (whose ``_relative_source`` would raise ``ValueError`` outside the repo).
+    """
+    root = settings.tep_web_root
+    if not root.exists():
+        return []
+    src = root / "apps" / "src"
+    if not src.exists():
+        return []
+    skip_parts = {"dist", ".astro", "node_modules"}
+    files: list[Path] = []
+    for pattern in ("*.astro", "*.tsx", "*.ts"):
+        for p in src.rglob(pattern):
+            if not skip_parts.isdisjoint(p.parts):
+                continue
+            files.append(p)
+    return files
+
+
 SOURCE_DISCOVERERS: list[Callable[[], list[Path]]] = [
     discover_top_level_docs,
     discover_product_docs,
     discover_knowledge_base,
+    discover_tep_web_source,
 ]
 
 
@@ -338,6 +373,81 @@ def chunk_file(path: Path) -> list[IndexedChunk]:
     return chunks
 
 
+def _tep_web_relpath(path: Path) -> str:
+    """POSIX path of a tep-web source file relative to ``tep_web_root``.
+
+    Used for the chunk id prefix and ``heading_path`` metadata. Resolved
+    against ``tep_web_root`` (not ``REPO_ROOT``) because the tep-web corpus
+    lives outside the repo — ``_relative_source`` would raise here.
+    """
+    return path.resolve().relative_to(settings.tep_web_root.resolve()).as_posix()
+
+
+def _is_tep_web(path: Path) -> bool:
+    """True iff ``path`` lives under ``tep_web_root`` (the external corpus)."""
+    try:
+        path.resolve().relative_to(settings.tep_web_root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def chunk_code_file(path: Path) -> list[IndexedChunk]:
+    """Chunk a non-markdown source file (the tep-web code corpus).
+
+    Code has no markdown headings, so we skip ``MarkdownHeaderTextSplitter``
+    and split with ``RecursiveCharacterTextSplitter`` only, prefixing each
+    chunk with a synthetic header (``// tep-web :: <relpath>``) so the
+    embedder sees file context the splitter would otherwise strip.
+
+    Every chunk is tagged ``product_id="acelents"`` so ``list_products`` /
+    the FE picker surface it and ``search_documentation`` can scope to it.
+    ``heading_path`` carries the relative filepath so citations read like a
+    path breadcrumb (``apps/src/pages/index.astro``) instead of an md heading.
+    """
+    try:
+        body = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    if not body.strip():
+        return []
+
+    rel = _tep_web_relpath(path)
+    source = f"tep-web::{rel}"
+    base_metadata: dict[str, Any] = {
+        "source": source,
+        "product_id": "acelents",
+        "product_name": "Acelents Website",
+        "status": "active",
+        "heading_path": rel,
+        "kind": path.suffix.lstrip("."),
+    }
+
+    char_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=CHUNK_TARGET_CHARS,
+        chunk_overlap=CHUNK_OVERLAP_CHARS,
+    )
+
+    chunks: list[IndexedChunk] = []
+    for piece in char_splitter.split_text(f"// tep-web :: {rel}\n{body}"):
+        chunk_index = len(chunks)
+        chunks.append(
+            IndexedChunk(
+                chunk_id=f"{source}::{chunk_index}",
+                text=piece,
+                metadata=_clean_metadata({**base_metadata, "chunk_index": chunk_index}),
+            )
+        )
+    return chunks
+
+
+def _display_source(path: Path) -> str:
+    """Human-readable source label for the indexing log, repo- or tep-web-aware."""
+    if _is_tep_web(path):
+        return f"tep-web::{_tep_web_relpath(path)}"
+    return _relative_source(path)
+
+
 # ─── Embedding + upsert ──────────────────────────────────────────────────
 
 
@@ -412,12 +522,14 @@ def build_index() -> None:
 
     # 2. Chunk every file. We hold all chunks in memory because the corpus
     #    is small (hundreds of files, not millions). If that ever changes,
-    #    stream this loop and upsert in batches per file.
+    #    stream this loop and upsert in batches per file. Files under
+    #    tep_web_root (the external Acelents source corpus) go through the
+    #    code chunker; everything else through the markdown chunker.
     all_chunks: list[IndexedChunk] = []
     for path in sources:
-        file_chunks = chunk_file(path)
+        file_chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
         all_chunks.extend(file_chunks)
-        print(f"[indexing] {_relative_source(path)} → {len(file_chunks)} chunk(s)")
+        print(f"[indexing] {_display_source(path)} → {len(file_chunks)} chunk(s)")
 
     if not all_chunks:
         print("[indexing] discovered files but every one was empty — nothing to upsert")
