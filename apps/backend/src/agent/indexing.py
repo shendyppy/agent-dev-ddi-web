@@ -529,7 +529,7 @@ def build_index() -> None:
     for path in sources:
         file_chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
         all_chunks.extend(file_chunks)
-        print(f"[indexing] {_display_source(path)} → {len(file_chunks)} chunk(s)")
+        print(f"[indexing] {_display_source(path)} -> {len(file_chunks)} chunk(s)")
 
     if not all_chunks:
         print("[indexing] discovered files but every one was empty — nothing to upsert")
