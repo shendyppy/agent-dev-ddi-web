@@ -104,7 +104,9 @@ def _product_scope_text(product_id: str | None) -> str:
         return ""
     return (
         "## Current focus\n\n"
-        f"The user has selected the product `{product_id}` as their current focus. "
+        f"The user has selected the product `{product_id}` as their current focus, so "
+        f"every question is about THIS product unless they explicitly name another. "
+        "Do NOT ask the user which product they mean — they have already told you. "
         f'Call `search_documentation` with `product_id="{product_id}"` by default so '
         "answers stay within this product's documentation. Only omit `product_id` "
         "(searching all products) when the question clearly spans products or asks "

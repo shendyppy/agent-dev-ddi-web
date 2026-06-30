@@ -13,6 +13,7 @@ Each ADR captures a non-trivial architectural choice with the **Context**, **Dec
 | [0005](0005-deployment-strategy.md) | Deployment: Cloudflare Pages + Fly.io / Docker Compose | Accepted |
 | [0006](0006-product-doc-format.md) | Per-product documentation format | Accepted |
 | [0007](0007-retire-portrai-cms-agent.md) | Retire `portrai_cms_agent.py`, finalize MCP/LangGraph/Chroma path | Accepted |
+| [0008](0008-image-output-via-playwright.md) | Image output via Playwright + external source ingestion | Accepted |
 
 ## Writing a new ADR
 

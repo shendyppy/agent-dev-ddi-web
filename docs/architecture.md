@@ -38,7 +38,7 @@ High-level system view of the Documentation Agent Bot.
 │       │                │  MCP Servers (one per skill)        │    │
 │       │                │  search_docs   capture_screenshot   │    │
 │       │                │  list_products check_app_health     │    │
-│       │                │  get_run_instructions, ...          │    │
+│       │                │  (add new skills under mcp_servers/)│    │
 │       │                └──────┬──────────────────┬───────────┘    │
 │       │                       │                  │                 │
 │       │                       ▼                  ▼                 │

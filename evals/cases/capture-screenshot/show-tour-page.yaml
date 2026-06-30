@@ -1,0 +1,26 @@
+name: show-tour-page
+tags: [prompt:main-agent, skill:capture_screenshot]
+description: |
+  When asked to show a page of the Acelents site, the agent must call
+  capture_screenshot and embed the returned screenshot_url as a markdown image
+  (![alt](url)) — never paste the URL as raw text. Covers the image-output
+  feature (ADR 0008).
+
+input:
+  messages:
+    - role: user
+      content: "Tunjukkan halaman tour Acelents, kira-kira gimana tampilannya?"
+
+expected:
+  must_call_tool:
+    - capture_screenshot
+  must_contain_any:
+    - "!["
+    - "/screenshots/"
+  must_not_contain:
+    - "I don't have access"
+    - "I'm not able to show"
+  rubric:
+    - "Answer embeds a markdown image whose URL points at /screenshots/ (e.g. ![Halaman Tour](http://localhost:8000/screenshots/tour.png))."
+    - "The screenshot URL is NOT pasted as raw/plain text — it only appears inside a markdown image."
+    - "Answer is under 200 words and matches the user's language (Indonesian)."
