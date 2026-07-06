@@ -2,6 +2,7 @@
 product_id: new-assessment-center-participant
 product_name: New Assessment Center (Participant)
 status: active
+default_url: https://dayatech.aca.dlabssaas.io
 ---
 
 # New Assessment Center Participant - Feature Context & Tutorial Document

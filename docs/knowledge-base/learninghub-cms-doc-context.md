@@ -2,6 +2,7 @@
 product_id: learninghub-cms
 product_name: LearningHub CMS
 status: active
+default_url: https://cms.learninghub.odyssey.co.id
 ---
 
 # LearningHub CMS - Feature Context & Guide Document

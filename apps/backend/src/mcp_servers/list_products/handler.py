@@ -29,6 +29,7 @@ class Product(BaseModel):
     name: str
     status: str = "active"
     doc_count: int = 0  # number of indexed chunks tagged with this product
+    url: str | None = None  # default URL of the product's live website
 
 
 class ListProductsOutput(BaseModel):
@@ -56,11 +57,13 @@ def _collect_products() -> list[Product]:
             continue  # catalog/architecture chunks carry no product scope
         existing = products.get(product_id)
         if existing is None:
+            raw_url = meta.get("default_url")
             products[product_id] = Product(
                 id=product_id,
                 name=str(meta.get("product_name") or product_id),
                 status=str(meta.get("status") or "active"),
                 doc_count=1,
+                url=str(raw_url) if raw_url else None,
             )
         else:
             existing.doc_count += 1

@@ -1,0 +1,33 @@
+name: klob-hyperlink-in-response
+tags: [prompt:main-agent, skill:search_documentation, product:klob, feature:hyperlink]
+description: |
+  Regression guard for the hyperlink enhancement (feat/redis-enhancement).
+  When a user asks about Klob or a specific Klob feature, the agent must
+  embed a markdown hyperlink to the product/feature URL in the response.
+  The URL must come from the default_url metadata in the retrieved chunk
+  (https://www.klob.id), not be fabricated. The agent must never invent a
+  URL that wasn't returned by a tool.
+
+input:
+  messages:
+    - role: user
+      content: "Apa itu Klob Meter dan bagaimana cara menggunakannya?"
+
+expected:
+  must_call_tool:
+    - search_documentation
+  must_contain_any:
+    # Agent must embed a hyperlink - either to the product homepage or the feature route
+    - "https://www.klob.id"
+    - "klob.id/home/klob-meter"
+    - "[Klob"
+    - "[klob"
+  must_not_contain:
+    - "https://klob.id/made-up"   # fabricated URL
+    - "http://localhost"          # dev URL leaking into prod answer
+
+  rubric:
+    - "Response contains at least one markdown hyperlink in the format [text](url) pointing to klob.id."
+    - "The URL used is grounded in the tool result (default_url or route path from docs), not invented."
+    - "Answer explains what Klob Meter is and how to use it, citing the retrieved documentation."
+    - "Answer is in Bahasa Indonesia (user asked in Indonesian)."

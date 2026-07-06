@@ -2,6 +2,7 @@
 product_id: portrai-cms
 product_name: PortrAI CMS
 status: active
+default_url: https://dayatech.cms-aca.dlabssaas.io
 ---
 
 # PortrAI CMS - Feature Context & Tutorial Document

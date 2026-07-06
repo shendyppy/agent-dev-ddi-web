@@ -2,6 +2,7 @@
 product_id: learninghub-userweb
 product_name: LearningHub Participant (Userweb)
 status: active
+default_url: https://learninghub.odyssey.co.id
 ---
 
 # LearningHub Participant (Userweb) - Feature Context & Guide Document

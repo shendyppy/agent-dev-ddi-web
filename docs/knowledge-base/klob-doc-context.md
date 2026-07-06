@@ -2,6 +2,7 @@
 product_id: klob
 product_name: Klob.id
 status: active
+default_url: https://www.klob.id
 ---
 
 # Klob.id (Klob Frontend) - Feature Context & Guide Document
