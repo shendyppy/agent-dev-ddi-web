@@ -22,7 +22,7 @@ Dokumen ini berisi rangkuman seluruh fitur yang ada di dalam **website marketing
 - **SEO:** `@astrojs/sitemap` (sitemap otomatis, halaman `/tour` di-_exclude_) + JSON-LD structured data
 - **Image Optimization:** `sharp`
 - **Environment Config:** `env-cmd` dengan file `.env-cmdrc` (profil `local`, `development`, `staging`, `production`)
-- **Package Manager:** pnpm (monorepo tipis — source aplikasi ada di `apps/`)
+- **Package Manager:** npm (monorepo tipis — source aplikasi ada di `apps/`)
 - **Arsitektur Komponen:** Atomic Design (`atoms/` → `molecules/` → `organisms/` → `pages/`); halaman Astro di `src/pages/` bersifat _thin wrapper_ yang me-mount komponen React sebagai island (`client:load` / `client:visible`)
 - **Deployment:** Static build ke `apps/dist/` (HTML/CSS/JS murni, tanpa server runtime)
 
@@ -61,7 +61,7 @@ Sumber diambil dari repo `tep-web` branch **`development-astro`**.
 ### Prasyarat
 
 - **Node 22+**
-- **pnpm**
+- **npm**
 - **Git**
 
 ### Langkah
@@ -75,11 +75,11 @@ git checkout development-astro
 
 # source aplikasi berada di folder apps/
 cd apps
-pnpm install
-pnpm dev
+npm install
+npm run dev
 ```
 
-`pnpm dev` menjalankan `env-cmd -e local -- astro dev`, yaitu Astro dev server dengan profil environment `local`. Situs tersedia di **`http://localhost:4321`** (port default Astro).
+`npm run dev` menjalankan `env-cmd -e local -- astro dev`, yaitu Astro dev server dengan profil environment `local`. Situs tersedia di **`http://localhost:4321`** (port default Astro).
 
 ### Verifikasi
 
@@ -92,16 +92,16 @@ curl -I http://localhost:4321/
 
 | Script | Fungsi |
 |---|---|
-| `pnpm dev` | Dev server (profil `local`) |
-| `pnpm build` | Build statis (tanpa profil env) |
-| `pnpm build:dev` / `build:staging` / `build:prod` | Build per-environment via `env-cmd` → output ke `apps/dist/` |
-| `pnpm preview` | Preview hasil build |
-| `pnpm lint` / `lint:fix` | ESLint |
-| `pnpm format` / `format:check` | Prettier |
+| `npm run dev` | Dev server (profil `local`) |
+| `npm run build` | Build statis (tanpa profil env) |
+| `npm run build:dev` / `build:staging` / `build:prod` | Build per-environment via `env-cmd` → output ke `apps/dist/` |
+| `npm run preview` | Preview hasil build |
+| `npm run lint` / `lint:fix` | ESLint |
+| `npm run format` / `format:check` | Prettier |
 
 ### Catatan Penting
 
-- **Port 4321 bentrok** dengan frontend agent doc-agent (yang juga default Astro 4321). Jika keduanya jalan bersamaan, jalankan salah satu di port lain: `pnpm dev --port 4322`.
+- **Port 4321 bentrok** dengan frontend agent doc-agent (yang juga default Astro 4321). Jika keduanya jalan bersamaan, jalankan salah satu di port lain: `npm run dev -- --port 4322`.
 - `apps/README.md` masih berisi boilerplate **Next.js** (leftover template) — abaikan, project ini murni **Astro**, bukan Next.js.
 - Halaman **Tur Produk (`/tour`) hanya dapat diakses via desktop/laptop** (lebar layar besar). Di mobile ditampilkan pesan untuk beralih ke perangkat lebih besar.
 
