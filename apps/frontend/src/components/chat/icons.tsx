@@ -8,13 +8,13 @@
 type IconProps = { className?: string };
 
 const base = {
-  viewBox: '0 0 24 24',
-  fill: 'none',
-  stroke: 'currentColor',
-  'stroke-width': '2',
-  'stroke-linecap': 'round' as const,
-  'stroke-linejoin': 'round' as const,
-  'aria-hidden': 'true' as const,
+  viewBox: "0 0 24 24",
+  fill: "none",
+  stroke: "currentColor",
+  "stroke-width": "2",
+  "stroke-linecap": "round" as const,
+  "stroke-linejoin": "round" as const,
+  "aria-hidden": "true" as const,
 };
 
 export const DocumentIcon = ({ className }: IconProps) => (
@@ -40,5 +40,13 @@ export const CheckIcon = ({ className }: IconProps) => (
 export const SendIcon = ({ className }: IconProps) => (
   <svg class={className} {...base}>
     <path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+  </svg>
+);
+
+export const MicIcon = ({ className }: IconProps) => (
+  <svg class={className} {...base}>
+    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+    <path d="M19 10v1a7 7 0 0 1-14 0v-1" />
+    <line x1="12" x2="12" y1="19" y2="22" />
   </svg>
 );
