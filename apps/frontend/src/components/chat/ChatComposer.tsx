@@ -19,11 +19,12 @@
  *   • handleInput  — controlled value + auto-grow up to max-h-[200px]
  *   • handleKeyDown — Enter sends, Shift+Enter inserts a newline
  */
-import type { Ref } from 'preact';
-import { Button } from '@/components/ui/button';
-import { Textarea } from '@/components/ui/textarea';
-import { SendIcon } from './icons';
-import type { Copy } from '@/lib/copy';
+import type { Ref } from "preact";
+import { useState, useEffect } from "preact/hooks";
+import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
+import { SendIcon, MicIcon } from "./icons";
+import type { Copy } from "@/lib/copy";
 
 type ChatComposerProps = {
   copy: Copy;
@@ -42,16 +43,80 @@ export function ChatComposer({
   busy,
   textareaRef,
 }: ChatComposerProps) {
+  // --- VOICE INPUT STATE & LOGIC ---
+  const [isListening, setIsListening] = useState(false);
+  const [recognition, setRecognition] = useState<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (SpeechRecognition) {
+      const rec = new SpeechRecognition();
+      rec.continuous = true; // Diubah ke true agar tidak langsung mati saat jeda pendek
+      rec.lang = "id-ID";
+      rec.interimResults = true; // Kita aktifkan interim dengan manajemen state yang baik
+
+      rec.onstart = () => setIsListening(true);
+      rec.onend = () => setIsListening(false);
+
+      rec.onresult = (event: any) => {
+        let finalTranscript = "";
+        let interimTranscript = "";
+
+        // Loop semua hasil dari awal sampai akhir sesi speech saat ini
+        for (let i = event.resultIndex; i < event.results.length; ++i) {
+          if (event.results[i].isFinal) {
+            finalTranscript += event.results[i][0].transcript;
+          } else {
+            interimTranscript += event.results[i][0].transcript;
+          }
+        }
+
+        // Gabungkan teks yang sudah final dengan yang masih ditebak (interim)
+        // Trik smooth: Berikan spasi tipis jika keduanya ada
+        const fullText =
+          finalTranscript + (interimTranscript ? " " + interimTranscript : "");
+
+        if (fullText.trim()) {
+          onChange(fullText);
+        }
+      };
+
+      rec.onerror = (event: any) => {
+        console.error("Speech error", event.error);
+        setIsListening(false);
+      };
+
+      setRecognition(rec);
+    }
+  }, []);
+
+  const toggleListening = () => {
+    if (!recognition) {
+      alert("Browser Anda tidak mendukung Voice Input.");
+      return;
+    }
+
+    if (isListening) {
+      recognition.stop();
+    } else {
+      recognition.start();
+    }
+  };
+  // --- END OF VOICE INPUT LOGIC ---
+
   const handleInput = (e: Event) => {
     const target = e.target as HTMLTextAreaElement;
     onChange(target.value);
     // Auto-grow to fit content, capped at 200px; beyond that it scrolls.
-    target.style.height = 'auto';
+    target.style.height = "auto";
     target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       onSubmit();
     }
@@ -79,7 +144,26 @@ export function ChatComposer({
         disabled={busy}
         rows={1}
       />
+      {/* BUTTON 1: VOICE INPUT (Symmetric 40px Circle) */}
+      {recognition && (
+        <Button
+          type="button"
+          size="icon"
+          className={`h-10 w-10 shrink-0 rounded-full transition duration-200 active:scale-95 disabled:opacity-40 ${
+            isListening
+              ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
+              : "hover:bg-accent hover:text-accent-foreground"
+          }`}
+          onClick={toggleListening}
+          disabled={busy}
+          title="Voice Input"
+          aria-label="Voice Input"
+        >
+          <MicIcon className="h-[18px] w-[18px]" />
+        </Button>
+      )}
 
+      {/* BUTTON 2: SEND */}
       <Button
         type="button"
         size="icon"
