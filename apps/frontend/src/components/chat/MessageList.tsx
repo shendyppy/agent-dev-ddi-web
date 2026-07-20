@@ -21,7 +21,8 @@ import { UserBubble } from './UserBubble';
 import { ToolChip } from './ToolChip';
 import { TypingIndicator } from './TypingIndicator';
 import { ErrorBubble } from './ErrorBubble';
-import { renderMarkdown, type Message } from '@/lib/chat';
+import { CitationList } from './CitationList';
+import { renderMarkdown, extractCitations, type Message } from '@/lib/chat';
 import type { Copy } from '@/lib/copy';
 
 type MessageListProps = {
@@ -34,18 +35,23 @@ type MessageListProps = {
   onRetry: () => void;
 };
 
-/** Markdown body for an assistant message.
+/** Markdown body for an assistant message with an optional citation strip.
  *
- *  `renderMarkdown` (lib/chat.ts) is memoised by content string and runs the
- *  output through DOMPurify, so this is safe to inject. The `.markdown-body`
- *  hook class is styled in global.css — Tailwind utilities can't reach into
- *  nodes created via dangerouslySetInnerHTML at scan time. */
-function MarkdownContent({ content }: { content: string }) {
+ *  `extractCitations` strips the "Sources:" block from the raw content before
+ *  passing it to `renderMarkdown`, then `CitationList` renders the sources in a
+ *  dedicated, styled strip below the answer. Both steps are safe to call on
+ *  every render because `renderMarkdown` is memoised and `extractCitations` is
+ *  a cheap regex. */
+function MarkdownContent({ content, copy }: { content: string; copy: Copy }) {
+  const { body, citations } = extractCitations(content);
   return (
-    <div
-      class="markdown-body text-[1rem] leading-relaxed text-foreground"
-      dangerouslySetInnerHTML={{ __html: renderMarkdown(content) }}
-    />
+    <div class="flex flex-col">
+      <div
+        class="markdown-body text-[1rem] leading-relaxed text-foreground"
+        dangerouslySetInnerHTML={{ __html: renderMarkdown(body) }}
+      />
+      <CitationList citations={citations} copy={copy} />
+    </div>
   );
 }
 
@@ -93,7 +99,7 @@ export function MessageList({
                 {m.isError ? (
                   <ErrorBubble content={m.content ?? ''} copy={copy} onRetry={onRetry} />
                 ) : hasContent ? (
-                  <MarkdownContent content={m.content as string} />
+                  <MarkdownContent content={m.content as string} copy={copy} />
                 ) : (
                   <ToolChip kind="calling" label={copy.toolCalling} />
                 )}

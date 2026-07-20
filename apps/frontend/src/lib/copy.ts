@@ -40,6 +40,7 @@ export type Copy = {
   productScopeLabel: string;
   productScopeAll: string;
   productScopeAria: string;
+  citationSources: string;
 };
 
 export const COPY: Record<Language, Copy> = {
@@ -74,6 +75,7 @@ export const COPY: Record<Language, Copy> = {
     productScopeLabel: 'Fokus:',
     productScopeAll: 'Semua produk',
     productScopeAria: 'Pilih produk yang ingin difokuskan',
+    citationSources: 'Sumber',
   },
   en: {
     appTitle: 'Documentation Agent',
@@ -106,6 +108,7 @@ export const COPY: Record<Language, Copy> = {
     productScopeLabel: 'Focus:',
     productScopeAll: 'All products',
     productScopeAria: 'Pick a product to focus on',
+    citationSources: 'Sources',
   },
 };
 
