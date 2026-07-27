@@ -119,3 +119,28 @@ export function renderMarkdown(content: string): string {
   MD_CACHE.set(content, html);
   return html;
 }
+
+// ─── Citation extraction ──────────────────────────────────────────────
+// The main-agent prompt instructs the LLM to end grounded answers with a
+// "Sources:" list of file paths or URLs it retrieved from tools. We parse
+// that block out of the raw markdown so we can render it as a dedicated
+// citation component instead of inline markdown text.
+//
+// Returns the answer body with the Sources block removed, plus the list
+// of source strings. An empty array means "no citations present" — the
+// component should render nothing.
+
+const SOURCES_RE = /\n{0,2}\*{0,2}[Ss]ources?:?\*{0,2}\s*\n((?:[ \t]*[-*\d.]+\s*.+\n?)*)/;
+
+export function extractCitations(content: string): { body: string; citations: string[] } {
+  const match = SOURCES_RE.exec(content);
+  if (!match) return { body: content, citations: [] };
+
+  const citations = match[1]
+    .split('\n')
+    .map((line) => line.replace(/^[ \t]*[-*\d.]+\.?\s*/, '').trim())
+    .filter(Boolean);
+
+  const body = content.slice(0, match.index).trimEnd();
+  return { body, citations };
+}
