@@ -69,7 +69,7 @@ Copy-Item .env.example .env
 Lalu edit `.env` — minimal 2 baris ini buat pakai Gemini:
 
 ```bash
-LITELLM_MODEL=gemini/gemini-2.5-flash
+LITELLM_MODEL=gemini/gemini-3.6-flash
 GEMINI_API_KEY=AIza...kunci_kamu...
 ```
 
@@ -118,7 +118,7 @@ just dev-fe       # frontend saja, http://localhost:4321
 
 ```powershell
 curl http://localhost:8000/api/health      # {"status":"healthy"}
-curl http://localhost:8000/api/meta        # {"model":"gemini/gemini-2.5-flash"}
+curl http://localhost:8000/api/meta        # {"model":"gemini/gemini-3.6-flash"}
 curl http://localhost:8000/api/products    # daftar produk buat picker
 ```
 
@@ -308,7 +308,7 @@ keputusan ber-ADR tersendiri — dan kode pencariannya terisolasi di satu skill
 
 ## Rekap satu layar
 
-- **Jalanin**: `just bootstrap` → isi `.env` (`LITELLM_MODEL=gemini/gemini-2.5-flash` + `GEMINI_API_KEY`) → `just index` → `just dev`.
+- **Jalanin**: `just bootstrap` → isi `.env` (`LITELLM_MODEL=gemini/gemini-3.6-flash` + `GEMINI_API_KEY`) → `just index` → `just dev`.
 - **Pipeline RAG** = `discover → chunk → embed → upsert`, semua via `just index`.
 - **Chunk dulu, baru embed.** Embedding = "koordinat makna"; teks mirip → vektor berdekatan.
 - **Model embedding index-time & query-time WAJIB sama.**

@@ -33,6 +33,8 @@ type ChatComposerProps = {
   onSubmit: () => void;
   busy: boolean;
   textareaRef: Ref<HTMLTextAreaElement>;
+  /** False until the product scope gate has been passed. */
+  enabled: boolean;
 };
 
 export function ChatComposer({
@@ -42,6 +44,7 @@ export function ChatComposer({
   onSubmit,
   busy,
   textareaRef,
+  enabled,
 }: ChatComposerProps) {
   // --- VOICE INPUT STATE & LOGIC ---
   const [isListening, setIsListening] = useState(false);
@@ -122,7 +125,11 @@ export function ChatComposer({
     }
   };
 
-  const canSend = !busy && value.trim().length > 0;
+  // `locked` covers "no scope picked yet"; `busy` covers "a turn is in flight".
+  // Both disable input, but only the former changes the placeholder — it is the
+  // one the user can act on, and the placeholder is where we say how.
+  const locked = !enabled;
+  const canSend = enabled && !busy && value.trim().length > 0;
 
   return (
     // rounded-2xl + shadow-sm softens the box; focus-within swaps to the maroon
@@ -139,9 +146,9 @@ export function ChatComposer({
         value={value}
         onInput={handleInput}
         onKeyDown={handleKeyDown}
-        placeholder={copy.inputPlaceholder}
+        placeholder={locked ? copy.composerLockedPlaceholder : copy.inputPlaceholder}
         aria-label={copy.inputLabel}
-        disabled={busy}
+        disabled={busy || locked}
         rows={1}
       />
       {/* BUTTON 1: VOICE INPUT (Symmetric 40px Circle) */}
@@ -155,7 +162,7 @@ export function ChatComposer({
               : "hover:bg-accent hover:text-accent-foreground"
           }`}
           onClick={toggleListening}
-          disabled={busy}
+          disabled={busy || locked}
           title="Voice Input"
           aria-label="Voice Input"
         >

@@ -37,9 +37,21 @@ export type Copy = {
   errorRateLimit: string;
   errorServiceUnavailable: string;
   errorGeneric: string;
+  // Shown when the agent hit its tool-round budget — a distinct situation from
+  // a crash, so it gets copy that tells the user what actually helps.
+  errorLoopGuard: string;
   productScopeLabel: string;
   productScopeAll: string;
   productScopeAria: string;
+  // Entry gate: shown until the user picks a scope, which is what makes the
+  // product filter real rather than a default nobody notices.
+  gateHeading: string;
+  gateSubtitle: string;
+  gateAllProducts: string;
+  gateAllProductsHint: string;
+  gateLoading: string;
+  scopeChangeAria: string;
+  composerLockedPlaceholder: string;
   citationSources: string;
 };
 
@@ -72,9 +84,19 @@ export const COPY: Record<Language, Copy> = {
     errorRateLimit: 'Asisten lagi sibuk banget. Tunggu sebentar, lalu coba lagi.',
     errorServiceUnavailable: 'Layanannya lagi nggak tersedia. Coba lagi beberapa saat lagi, ya.',
     errorGeneric: 'Ada yang nggak beres. Coba kirim lagi pertanyaannya.',
+    errorLoopGuard:
+      'Pertanyaannya kelamaan dicari dan saya hentikan biar nggak boros. Coba persempit pertanyaannya, atau pilih fokus produk yang lebih spesifik.',
     productScopeLabel: 'Fokus:',
     productScopeAll: 'Semua produk',
     productScopeAria: 'Pilih produk yang ingin difokuskan',
+    gateHeading: 'Mau tanya soal produk yang mana?',
+    gateSubtitle:
+      'Pilih dulu fokusnya biar jawaban saya diambil dari dokumentasi yang tepat. Nanti bisa diganti kapan aja lewat menu di atas.',
+    gateAllProducts: 'Semua produk',
+    gateAllProductsHint: 'Buat pertanyaan yang membandingkan beberapa produk',
+    gateLoading: 'Lagi ambil daftar produk…',
+    scopeChangeAria: 'Ganti fokus produk',
+    composerLockedPlaceholder: 'Pilih fokus produk dulu di atas',
     citationSources: 'Sumber',
   },
   en: {
@@ -105,9 +127,19 @@ export const COPY: Record<Language, Copy> = {
     errorRateLimit: 'The assistant is swamped right now. Give it a moment and try again.',
     errorServiceUnavailable: 'The service is temporarily unavailable. Please try again shortly.',
     errorGeneric: 'Something went wrong. Please send your question again.',
+    errorLoopGuard:
+      'That question took too many searches, so I stopped before it got wasteful. Try narrowing it down, or pick a more specific product focus.',
     productScopeLabel: 'Focus:',
     productScopeAll: 'All products',
     productScopeAria: 'Pick a product to focus on',
+    gateHeading: 'Which product are you asking about?',
+    gateSubtitle:
+      'Pick a focus first so my answers come from the right documentation. You can change it any time from the menu above.',
+    gateAllProducts: 'All products',
+    gateAllProductsHint: 'For questions that compare several products',
+    gateLoading: 'Loading the product list…',
+    scopeChangeAria: 'Change product focus',
+    composerLockedPlaceholder: 'Pick a product focus above first',
     citationSources: 'Sources',
   },
 };

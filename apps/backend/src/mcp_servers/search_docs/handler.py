@@ -216,4 +216,27 @@ async def handle(payload: SearchInput) -> SearchOutput:
         score = float(1.0 - dist)
         chunks.append(Chunk(text=doc, source=source, score=score, metadata=meta))
 
+    # An empty result has to say so out loud. Returning bare `chunks=[]` reads
+    # to the LLM as "the search ran and there was nothing to report", which is
+    # exactly the condition under which it starts filling gaps from memory —
+    # the failure mode main-agent.md v7 was written to stop. It also matters
+    # more now that the orchestrator hard-scopes searches to one product: an
+    # empty result is far more often "wrong product" than "no such doc", and
+    # the agent can only say that if we tell it which scope was applied.
+    if not chunks:
+        if payload.product_id:
+            return SearchOutput(
+                chunks=[],
+                warning=(
+                    f"no documentation matched this query within product "
+                    f"{payload.product_id!r} — the search was scoped to that product. "
+                    "Tell the user you found nothing for it there and suggest they "
+                    "switch focus; do not answer from general knowledge."
+                ),
+            )
+        return SearchOutput(
+            chunks=[],
+            warning="no documentation matched this query across any product",
+        )
+
     return SearchOutput(chunks=chunks)

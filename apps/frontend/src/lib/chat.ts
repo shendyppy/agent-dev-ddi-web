@@ -49,6 +49,13 @@ export const API_BASE = import.meta.env.PUBLIC_API_BASE_URL ?? 'http://localhost
 
 export function mapErrorToFriendly(raw: string, copy: Copy): string {
   const s = raw.toLowerCase();
+  // Loop guard first: the backend caps tool rounds and normally recovers by
+  // forcing a final answer, so reaching here means the recursion backstop in
+  // server.py tripped. It needs its own copy — "try again" is the one piece of
+  // advice that definitely will not help, since the same question loops again.
+  if (s.includes('recursion') || s.includes('graphrecursion')) {
+    return copy.errorLoopGuard;
+  }
   if (s.includes('429') || s.includes('rate') || s.includes('quota') || s.includes('resource_exhausted')) {
     return copy.errorRateLimit;
   }

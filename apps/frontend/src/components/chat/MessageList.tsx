@@ -16,13 +16,14 @@
  */
 import type { Ref } from 'preact';
 import { WelcomeState } from './WelcomeState';
+import { ProductScopeGate } from './ProductScopeGate';
 import { AssistantRow } from './AssistantRow';
 import { UserBubble } from './UserBubble';
 import { ToolChip } from './ToolChip';
 import { TypingIndicator } from './TypingIndicator';
 import { ErrorBubble } from './ErrorBubble';
 import { CitationList } from './CitationList';
-import { renderMarkdown, extractCitations, type Message } from '@/lib/chat';
+import { renderMarkdown, extractCitations, type Message, type Product } from '@/lib/chat';
 import type { Copy } from '@/lib/copy';
 
 type MessageListProps = {
@@ -33,6 +34,13 @@ type MessageListProps = {
   endOfMessagesRef: Ref<HTMLDivElement>;
   onPickPrompt: (prompt: string) => void;
   onRetry: () => void;
+  // Empty-state gating: before a scope is chosen the region shows the product
+  // gate instead of the welcome hero, so the first thing asked of the user is
+  // the choice that scopes every later answer.
+  products: Product[];
+  productsLoading: boolean;
+  scopeChosen: boolean;
+  onChooseScope: (id: string | null) => void;
 };
 
 /** Markdown body for an assistant message with an optional citation strip.
@@ -63,6 +71,10 @@ export function MessageList({
   endOfMessagesRef,
   onPickPrompt,
   onRetry,
+  products,
+  productsLoading,
+  scopeChosen,
+  onChooseScope,
 }: MessageListProps) {
   return (
     <div class="flex flex-1 flex-col items-center overflow-y-auto px-6 py-6">
@@ -73,7 +85,14 @@ export function MessageList({
         aria-atomic="false"
         aria-label={copy.chatLogLabel}
       >
-        {messages.length === 0 ? (
+        {!scopeChosen ? (
+          <ProductScopeGate
+            copy={copy}
+            products={products}
+            loading={productsLoading}
+            onChoose={onChooseScope}
+          />
+        ) : messages.length === 0 ? (
           <WelcomeState copy={copy} onPickPrompt={onPickPrompt} />
         ) : (
           messages.map((m) => {

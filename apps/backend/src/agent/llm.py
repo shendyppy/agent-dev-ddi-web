@@ -16,7 +16,7 @@ from typing import Any
 
 import litellm
 import tenacity
-from langfuse import get_client, observe
+from langfuse import Langfuse, get_client, observe
 from litellm.exceptions import (
     APIConnectionError,
     InternalServerError,
@@ -31,6 +31,28 @@ from .settings import settings
 from .token_killer import prune_to_budget
 
 litellm.set_verbose = False
+
+# Langfuse is optional. With no credentials configured the SDK still spins up
+# an exporter that batches spans at LANGFUSE_HOST, fails, and retries in the
+# background — which is where the recurring
+# "Failed to export span batch due to timeout, max retries or shutdown" line
+# in the [be] log comes from. That noise buries real errors, so initialise the
+# client explicitly and turn tracing off unless BOTH keys are present.
+# @observe and update_current_generation stay no-ops in that state, so no
+# call site needs a conditional.
+_TRACING_ENABLED = bool(settings.langfuse_public_key and settings.langfuse_secret_key)
+Langfuse(
+    public_key=settings.langfuse_public_key,
+    secret_key=settings.langfuse_secret_key,
+    host=settings.langfuse_host,
+    tracing_enabled=_TRACING_ENABLED,
+)
+if not _TRACING_ENABLED:
+    print(
+        "[llm] Langfuse tracing disabled — set LANGFUSE_PUBLIC_KEY and "
+        "LANGFUSE_SECRET_KEY in .env to enable it",
+        file=sys.stderr,
+    )
 
 # Transient provider errors worth retrying with backoff. Auth/validation
 # errors (401/400) are deliberately excluded — retrying those only wastes the
@@ -69,7 +91,16 @@ async def acompletion(
     """
     model = model or settings.litellm_model
     if max_input_tokens is not None:
-        messages = prune_to_budget(messages, max_tokens=max_input_tokens, model=model)
+        try:
+            messages = prune_to_budget(messages, max_tokens=max_input_tokens, model=model)
+        except ValueError as exc:
+            # The protected slice (system prompt + most recent exchange) alone
+            # busts the budget — nothing left to prune. Sending the request
+            # anyway is the better failure: the budget is our own cost guard,
+            # well below the provider's actual context window, so the call will
+            # very likely still succeed. Turning a cost heuristic into a hard
+            # 500 would be worse than briefly overspending.
+            print(f"[llm] token budget not enforceable: {exc}", file=sys.stderr)
 
     langfuse = get_client()
     langfuse.update_current_generation(model=model, input=messages)

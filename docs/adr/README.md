@@ -14,6 +14,7 @@ Each ADR captures a non-trivial architectural choice with the **Context**, **Dec
 | [0006](0006-product-doc-format.md) | Per-product documentation format | Accepted |
 | [0007](0007-retire-portrai-cms-agent.md) | Retire `portrai_cms_agent.py`, finalize MCP/LangGraph/Chroma path | Accepted |
 | [0008](0008-image-output-via-playwright.md) | Image output via Playwright + external source ingestion | Accepted |
+| [0009](0009-enforced-product-scope-and-loop-guard.md) | Enforce product scope in the orchestrator; bound the agent tool loop | Accepted |
 
 ## Writing a new ADR
 

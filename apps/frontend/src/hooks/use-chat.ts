@@ -29,6 +29,21 @@ export function useChat() {
   // after load — it pulses while waiting, then either shows the chips or hides.
   const [productsLoading, setProductsLoading] = useState(true);
   const [activeProductId, setActiveProductId] = useState<string | null>(null);
+  // Whether the user has passed the scope gate. This has to be its own flag,
+  // NOT `activeProductId !== null`: null now means two different things —
+  // "hasn't chosen yet" and "deliberately chose all products" — and the whole
+  // point of the gate is that those two stop being the same state.
+  //
+  // Deliberately not persisted. A reload clears the transcript, which makes it
+  // a new conversation, and a new conversation should pick its own scope.
+  const [scopeChosen, setScopeChosen] = useState(false);
+
+  // Single entry point for both the gate and the header picker, so passing the
+  // gate can never be forgotten at one of the call sites.
+  const chooseScope = useCallback((id: string | null) => {
+    setActiveProductId(id);
+    setScopeChosen(true);
+  }, []);
 
   const endOfMessagesRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -93,7 +108,10 @@ export function useChat() {
 
   async function send(overrideInput?: string) {
     const text = (overrideInput ?? input).trim();
-    if (!text || busy) return;
+    // The composer is disabled before the gate is passed; this guard covers the
+    // other paths into send() (suggested prompts, retry) so no turn can reach
+    // the backend without a scope decision behind it.
+    if (!text || busy || !scopeChosen) return;
 
     const userMessage = withId({ role: 'user', content: text });
     const historyForRequest = [...messages, userMessage];
@@ -180,7 +198,8 @@ export function useChat() {
     products,
     productsLoading,
     activeProductId,
-    setActiveProductId,
+    scopeChosen,
+    chooseScope,
     copy,
     send,
     typingLabel,

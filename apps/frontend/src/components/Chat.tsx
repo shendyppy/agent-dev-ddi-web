@@ -17,7 +17,6 @@
 import { useChat } from '@/hooks/use-chat';
 import { ChatHeader } from './chat/ChatHeader';
 import { MessageList } from './chat/MessageList';
-import { ProductScopePicker } from './chat/ProductScopePicker';
 import { ChatComposer } from './chat/ChatComposer';
 
 export default function Chat() {
@@ -30,6 +29,10 @@ export default function Chat() {
         lang={chat.lang}
         onLangChange={chat.setLang}
         modelLabel={chat.modelLabel}
+        products={chat.products}
+        activeProductId={chat.activeProductId}
+        onScopeChange={chat.chooseScope}
+        scopeChosen={chat.scopeChosen}
       />
 
       <MessageList
@@ -47,16 +50,13 @@ export default function Chat() {
         onRetry={() =>
           chat.send(chat.messages.filter((m) => m.role === 'user').slice(-1)[0]?.content ?? '')
         }
+        products={chat.products}
+        productsLoading={chat.productsLoading}
+        scopeChosen={chat.scopeChosen}
+        onChooseScope={chat.chooseScope}
       />
 
       <footer class="flex w-full flex-col items-center gap-2.5 border-t border-border bg-background px-6 pb-6 pt-4">
-        <ProductScopePicker
-          copy={chat.copy}
-          products={chat.products}
-          activeProductId={chat.activeProductId}
-          onSelect={chat.setActiveProductId}
-          loading={chat.productsLoading}
-        />
         <ChatComposer
           copy={chat.copy}
           value={chat.input}
@@ -64,6 +64,7 @@ export default function Chat() {
           onSubmit={() => chat.send()}
           busy={chat.busy}
           textareaRef={chat.textareaRef}
+          enabled={chat.scopeChosen}
         />
       </footer>
     </div>

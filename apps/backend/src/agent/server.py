@@ -221,8 +221,16 @@ async def _stream_graph_events(
     instead of a silent connection drop.
     """
     graph = get_graph()
+    # Belt and braces. The real stop is the tool-round budget in graph's
+    # _route_after_llm; this is the backstop for any path that bypasses it.
+    # LangGraph counts *supersteps*, and one round costs two (llm + tools),
+    # so the limit has to be at least double the round budget — plus headroom
+    # for the entry hop and the forced final answer. Passing it explicitly
+    # also puts the number in the code instead of silently inheriting
+    # LangGraph's default of 25.
+    config = {"recursion_limit": settings.agent_max_tool_rounds * 2 + 4}
     try:
-        async for event in graph.astream(initial_state):
+        async for event in graph.astream(initial_state, config=config):
             for _node_name, node_output in event.items():
                 new_messages = (node_output or {}).get("messages") or []
                 for msg in new_messages:
@@ -257,5 +265,8 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
         "messages": [m.model_dump() for m in req.messages],
         "session_id": session_id,
         "product_id": req.product_id,
+        # Rounds are counted per turn, not per conversation — each request
+        # gets a fresh budget.
+        "tool_rounds": 0,
     }
     return EventSourceResponse(_stream_graph_events(initial_state, session_id))
