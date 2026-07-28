@@ -22,7 +22,10 @@ import { cn } from '@/lib/utils';
 const toggleVariants = cva(
   'inline-flex items-center justify-center rounded-full text-xs font-medium transition-all duration-200 cursor-pointer text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset disabled:pointer-events-none disabled:opacity-50 motion-safe:active:scale-[0.95] data-[state=on]:bg-primary data-[state=on]:text-primary-foreground data-[state=on]:shadow-sm',
   {
-    variants: { size: { default: 'h-6 px-2.5', sm: 'h-5 px-2' } },
+    // h-7 rather than h-6: at 24px the pills were an awkward tap target on a
+    // phone. 28px inside a 36px track is still compact enough for the header
+    // while being meaningfully easier to hit.
+    variants: { size: { default: 'h-7 px-3', sm: 'h-5 px-2' } },
     defaultVariants: { size: 'default' },
   },
 );
@@ -37,7 +40,10 @@ const ToggleGroup = React.forwardRef<
 >(({ className, size, children, ...props }, ref) => (
   <ToggleGroupPrimitive.Root
     ref={ref}
-    className={cn('inline-flex items-center gap-1 rounded-full border border-border bg-muted/60 p-1', className)}
+    className={cn(
+      'inline-flex items-center gap-1 rounded-full border border-hairline bg-card/70 p-1 shadow-panel',
+      className,
+    )}
     {...props}
   >
     <ToggleGroupContext.Provider value={{ size }}>{children}</ToggleGroupContext.Provider>

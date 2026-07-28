@@ -33,6 +33,8 @@ type ChatComposerProps = {
   onSubmit: () => void;
   busy: boolean;
   textareaRef: Ref<HTMLTextAreaElement>;
+  /** False until the product scope gate has been passed. */
+  enabled: boolean;
 };
 
 export function ChatComposer({
@@ -42,6 +44,7 @@ export function ChatComposer({
   onSubmit,
   busy,
   textareaRef,
+  enabled,
 }: ChatComposerProps) {
   // --- VOICE INPUT STATE & LOGIC ---
   const [isListening, setIsListening] = useState(false);
@@ -93,11 +96,10 @@ export function ChatComposer({
     }
   }, []);
 
+  // The button is only rendered when `recognition` is non-null, so there is no
+  // unsupported-browser branch to handle here.
   const toggleListening = () => {
-    if (!recognition) {
-      alert("Browser Anda tidak mendukung Voice Input.");
-      return;
-    }
+    if (!recognition) return;
 
     if (isListening) {
       recognition.stop();
@@ -122,12 +124,19 @@ export function ChatComposer({
     }
   };
 
-  const canSend = !busy && value.trim().length > 0;
+  // `locked` covers "no scope picked yet"; `busy` covers "a turn is in flight".
+  // Both disable input, but only the former changes the placeholder — it is the
+  // one the user can act on, and the placeholder is where we say how.
+  const locked = !enabled;
+  const canSend = enabled && !busy && value.trim().length > 0;
 
   return (
     // rounded-2xl + shadow-sm softens the box; focus-within swaps to the maroon
     // ring token and lifts the surface so the active field is unambiguous.
-    <div class="anim-in flex w-full max-w-[760px] items-end gap-2 rounded-2xl border border-border bg-card px-2.5 py-2 shadow-sm transition-all duration-200 focus-within:border-ring focus-within:ring-2 focus-within:ring-ring/20">
+    // rounded-2xl + shadow-raised lifts the field off the blurred footer;
+    // focus-within swaps the ambient shadow for the brand glow so the active
+    // field is unambiguous without adding a second ring on top of the border.
+    <div class="anim-in flex w-full max-w-[760px] items-end gap-1.5 rounded-2xl border border-hairline bg-card px-2 py-2 shadow-raised transition-all duration-300 ease-expo focus-within:border-ring focus-within:shadow-glow sm:gap-2 sm:px-2.5">
       <label class="sr-only" htmlFor="chat-input">
         {copy.inputLabel}
       </label>
@@ -139,25 +148,38 @@ export function ChatComposer({
         value={value}
         onInput={handleInput}
         onKeyDown={handleKeyDown}
-        placeholder={copy.inputPlaceholder}
+        placeholder={locked ? copy.composerLockedPlaceholder : copy.inputPlaceholder}
         aria-label={copy.inputLabel}
-        disabled={busy}
+        disabled={busy || locked}
         rows={1}
       />
-      {/* BUTTON 1: VOICE INPUT (Symmetric 40px Circle) */}
+      {/* BUTTON 1: VOICE INPUT (Symmetric 40px Circle)
+          variant="ghost", not the default fill: the mic previously inherited
+          `bg-primary` and sat next to an identically maroon send button, so the
+          composer had two competing primary actions. Ghost makes send the only
+          filled control. The listening state now uses the destructive token
+          rather than a hardcoded palette red, which was off brand and did not
+          respond to dark mode.
+
+          NOTE: do not name a Tailwind class literally in a comment — the v4
+          scanner reads raw file text, so a class mentioned in prose is still
+          emitted into the bundle as dead CSS.
+          aria-pressed exposes the on/off state that the colour alone conveys. */}
       {recognition && (
         <Button
           type="button"
           size="icon"
-          className={`h-10 w-10 shrink-0 rounded-full transition duration-200 active:scale-95 disabled:opacity-40 ${
+          variant="ghost"
+          className={`h-10 w-10 shrink-0 rounded-full transition-all duration-200 ease-expo disabled:opacity-40 ${
             isListening
-              ? "bg-red-500 text-white hover:bg-red-600 animate-pulse"
-              : "hover:bg-accent hover:text-accent-foreground"
+              ? "bg-destructive text-destructive-foreground shadow-glow hover:bg-destructive/90 motion-safe:animate-pulse"
+              : "text-muted-foreground hover:bg-muted hover:text-foreground"
           }`}
           onClick={toggleListening}
-          disabled={busy}
-          title="Voice Input"
-          aria-label="Voice Input"
+          disabled={busy || locked}
+          title={isListening ? copy.voiceStopLabel : copy.voiceLabel}
+          aria-label={isListening ? copy.voiceStopLabel : copy.voiceLabel}
+          aria-pressed={isListening}
         >
           <MicIcon className="h-[18px] w-[18px]" />
         </Button>
@@ -171,7 +193,7 @@ export function ChatComposer({
         // rounded-full + hover/active scale give it presence and a tactile feel.
         // `transition` (all) wins over the variant's transition-colors so the
         // transform animates too.
-        className="h-10 w-10 shrink-0 rounded-full transition duration-200 hover:scale-[1.05] hover:bg-primary/90 active:scale-95 disabled:opacity-40"
+        className="tile-sheen h-10 w-10 shrink-0 rounded-full shadow-panel ring-1 ring-inset ring-white/15 transition-all duration-200 ease-expo hover:shadow-glow motion-safe:hover:scale-[1.06] disabled:opacity-40 disabled:shadow-none"
         onClick={onSubmit}
         disabled={!canSend}
         title={copy.sendLabel}

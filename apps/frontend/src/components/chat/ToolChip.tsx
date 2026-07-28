@@ -13,7 +13,17 @@ export function ToolChip({ kind, label }: { kind: 'calling' | 'result'; label: s
         kind === 'result' && 'opacity-60',
       )}
     >
-      <span class="inline-flex items-center gap-1.5 rounded-xs border border-border px-2.5 py-[3px]">
+      {/* rounded-full + card fill turns this from a boxy outline into a status
+          pill, which is what it actually is. The 'calling' variant borrows the
+          brand tint so an in-progress tool reads as active, not as metadata. */}
+      <span
+        class={clsx(
+          'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3px] transition-colors duration-200',
+          kind === 'calling'
+            ? 'border-primary/25 bg-primary/5 text-primary'
+            : 'border-hairline bg-card',
+        )}
+      >
         <Icon className="h-3 w-3 shrink-0" />
         {label}
       </span>

@@ -79,7 +79,7 @@ LiteLLM supports. The provider is chosen by an env var:
 
 ```bash
 # .env
-LITELLM_MODEL=gemini/gemini-2.5-flash
+LITELLM_MODEL=gemini/gemini-3.6-flash
 GEMINI_API_KEY=AIza...
 ```
 
@@ -155,7 +155,7 @@ code path; see [ADR 0007](../adr/0007-retire-portrai-cms-agent.md)).
 **Step 2 — Set two env vars in `.env`**:
 
 ```bash
-LITELLM_MODEL=gemini/gemini-2.5-flash
+LITELLM_MODEL=gemini/gemini-3.6-flash
 GEMINI_API_KEY=AIza...your_key...
 ```
 
@@ -194,7 +194,7 @@ If you see a 3-word reply, Gemini is wired correctly through the gateway.
 **Step 5 — Want Claude instead?** Change two lines:
 
 ```diff
-- LITELLM_MODEL=gemini/gemini-2.5-flash
+- LITELLM_MODEL=gemini/gemini-3.6-flash
 - GEMINI_API_KEY=AIza...
 + LITELLM_MODEL=claude-sonnet-4-6
 + ANTHROPIC_API_KEY=sk-ant-...
@@ -383,7 +383,7 @@ client-fetching pattern changed from `Langfuse()` constructor to
 ## 8. The one-screen recap
 
 - **One file owns LLM access**: `agent/llm.py`.
-- **Switch providers** via `.env`: `LITELLM_MODEL=gemini/gemini-2.5-flash` + `GEMINI_API_KEY=...`. Restart. Done.
+- **Switch providers** via `.env`: `LITELLM_MODEL=gemini/gemini-3.6-flash` + `GEMINI_API_KEY=...`. Restart. Done.
 - **Never** import `openai` / `anthropic` / `google.genai` / `google.adk` in feature code.
 - **Prompts** live in `prompts/*.md`, not Python strings.
 - **Skills** live as MCP servers in `mcp_servers/`, not as inline tools.

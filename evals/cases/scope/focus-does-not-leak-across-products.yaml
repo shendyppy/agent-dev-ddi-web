@@ -1,0 +1,41 @@
+name: focus-does-not-leak-across-products
+tags: [prompt:main-agent, skill:search_documentation, product:tep-cms, feature:scope-gate]
+description: |
+  Regression for the scope picker being decorative. Before 2026-07-27 the
+  selected product only reached the model as a sentence in the system prompt
+  asking it to pass `product_id` itself, so a question that sounded like
+  another product's territory would happily retrieve that other product's docs.
+  graph.call_tools now injects the focused product_id into every
+  search_documentation call (see ADR 0009), so retrieval cannot leave the
+  focused product regardless of what the model writes.
+
+  This case asks a DASH-Participant question while focused on tep-cms. Video
+  call / Amazon Chime belongs to dash-participant-saas and appears nowhere in
+  the TEP CMS docs, so the correct behaviour is to report the gap against the
+  focus — not to answer it from another product's docs, and not to invent it.
+
+input:
+  product_id: tep-cms
+  messages:
+    - role: user
+      content: "Gimana cara peserta ikut video call?"
+
+expected:
+  must_call_tool:
+    - search_documentation
+  # Every search this turn must carry the injected scope, even though the user
+  # message never names a product.
+  tool_args_must_include:
+    search_documentation:
+      product_id: tep-cms
+  must_not_contain:
+    - "Amazon Chime"          # dash-participant-saas only — must not leak in
+    - "LiveKit"               # new-assessment-center-participant only
+    - "dash-participant"
+    - "compatibility-check"
+
+  rubric:
+    - "The answer states that TEP CMS documentation does not cover a participant video call, rather than answering the question from another product's docs."
+    - "It suggests switching the product focus (or asks whether the user meant a different product) instead of silently broadening the search."
+    - "No retrieved chunk cited in Sources: comes from a product other than tep-cms."
+    - "The agent does not claim the feature exists in TEP CMS, and does not describe generic video-call setup from general knowledge."

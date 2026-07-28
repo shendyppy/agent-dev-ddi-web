@@ -24,7 +24,12 @@ class Settings(BaseSettings):
     # All providers go through LiteLLM (see ADR 0003) — set LITELLM_MODEL
     # to switch and provide the matching key below. Unused keys are fine.
     # Full provider list + format examples: .env.example.
-    litellm_model: str = "gemini-2.5-flash"
+    # NOTE: Google retires Gemini model ids for *new* users without warning —
+    # `gemini-2.5-flash` and `gemini-2.5-flash-lite` both began returning 404
+    # ("no longer available to new users") in Jul 2026, even though they still
+    # appear in the ListModels response. Verify a candidate with a real
+    # generateContent call before pinning it here; ListModels is not proof.
+    litellm_model: str = "gemini/gemini-3.6-flash"
     anthropic_api_key: str | None = None
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
@@ -37,6 +42,58 @@ class Settings(BaseSettings):
     # to 3 retries.
     litellm_max_attempts: int = 4
     litellm_retry_max_wait: float = 20.0  # cap on a single backoff sleep (s)
+
+    # Offline mode OVERRIDE — force it on for the whole process. Normally you
+    # do not touch this: agent.llm switches itself offline for a couple of
+    # minutes whenever the provider answers with a capacity error (429/503/
+    # timeout), so a busy or quota-exhausted model produces a grounded local
+    # answer instead of an error bubble. See agent.llm's "Automatic offline
+    # fallback" section for the windows.
+    #
+    # Setting it true is useful for one job: frontend work. The Gemini key is
+    # free tier, capped at 20 requests per DAY per model, and forcing offline
+    # mode means UI iteration never touches that budget at all. It also makes
+    # the answer deterministic, which the real model is not.
+    #
+    # Dev-only. It bypasses the model entirely, so never enable it anywhere a
+    # real answer is expected — including eval runs, which would all trivially
+    # "pass" against the fixture.
+    llm_fake_mode: bool = False
+    # Pause before a forced-offline reply so the typing indicator is visible.
+    # Ignored on automatic fallback — that path has already spent seconds
+    # failing and retrying.
+    llm_fake_latency_seconds: float = 0.6
+
+    # When true (the default), an offline answer starts with a real
+    # `search_documentation` tool call, so the graph queries the LOCAL ChromaDB
+    # index and the answer quotes chunks that actually exist in the corpus —
+    # real text, real `Sources:` paths. Retrieval is free, so this costs
+    # nothing, and it is what makes an outage still useful to the user.
+    #
+    # Set false to get the static markdown fixture instead, which is the better
+    # choice when the thing under test is markdown rendering itself (it covers
+    # every element on purpose). Only sensible together with LLM_FAKE_MODE=true.
+    llm_fake_use_retrieval: bool = True
+
+    # Agent loop guard (applied in agent.graph). The graph loops
+    # llm → tools → llm for as long as the model keeps asking for tools, and
+    # nothing in that loop is self-limiting: a model that keeps re-searching
+    # burns one full-history LLM call plus a subprocess spawn per round, and
+    # history grows with every tool result. `agent_max_tool_rounds` caps the
+    # rounds; on hitting it the graph does one final LLM call with NO tools
+    # offered, so the user gets an answer from the evidence already gathered
+    # instead of a raw error. 6 is roughly double what a well-behaved answer
+    # needs (1-3 rounds) — high enough not to truncate legitimate multi-step
+    # research, low enough to stop a runaway early.
+    agent_max_tool_rounds: int = 6
+
+    # Pre-call input budget handed to token_killer. Tool results in this app
+    # are large JSON blobs of retrieved chunks, so a long conversation can
+    # push the request past the provider's context window; pruning drops the
+    # oldest turns before that happens. Sized well under the 1M-token windows
+    # of current Gemini/Claude models — the goal is cost control, not just
+    # avoiding hard failures.
+    agent_max_input_tokens: int = 60_000
 
     # Vector store
     chroma_persist_dir: Path = REPO_ROOT / ".data" / "chroma"

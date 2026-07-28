@@ -37,6 +37,7 @@ How to extend
 from __future__ import annotations
 
 import json
+import sys
 from datetime import date
 from typing import Annotated, Any, TypedDict
 
@@ -45,6 +46,13 @@ from langgraph.graph.message import add_messages
 
 from . import llm, mcp_clients, prompts
 from .settings import REPO_ROOT, settings
+
+# The one tool whose arguments the orchestrator is allowed to rewrite, so the
+# product scope picked in the UI is enforced rather than merely requested. Must
+# match the tool name exposed by mcp_servers/search_docs/server.py. If that
+# skill is ever renamed, scope enforcement silently stops working — the eval
+# case in evals/cases/scope/ is what catches that.
+_SCOPED_TOOL = "search_documentation"
 
 # ─── State shape ─────────────────────────────────────────────────────────
 
@@ -63,11 +71,16 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[dict[str, Any]], add_messages]
     session_id: str
-    # Optional product the user picked in the UI. When set, the system prompt
-    # nudges the agent to scope retrieval to this product (soft scope — the
-    # agent may still broaden when a question spans products). No reducer: it
-    # is set once in the initial state and carried unchanged through the run.
+    # Product the user picked in the UI gate. When set, retrieval is HARD
+    # scoped to it — see :func:`call_tools`, which injects the id into the
+    # search tool's arguments. None means the user explicitly chose "all
+    # products". No reducer: set once in the initial state and carried
+    # unchanged through the run.
     product_id: str | None
+    # How many times we have run the tools node this turn. Drives the loop
+    # guard in :func:`_route_after_llm`. No reducer — ``call_tools`` returns
+    # the incremented value, which overwrites the previous one.
+    tool_rounds: int
 
 
 # ─── System prompt assembly ──────────────────────────────────────────────
@@ -95,10 +108,15 @@ def _load_product_catalog_snapshot() -> str:
 def _product_scope_text(product_id: str | None) -> str:
     """Render the optional "current focus" block injected into the prompt.
 
-    Empty string when no product is selected (the placeholder then renders to
-    nothing). When a product is picked in the UI, this tells the agent to scope
-    ``search_documentation`` to that product by default — soft scope, so it may
-    still broaden for cross-product questions.
+    Empty string when the user chose "all products" (the placeholder then
+    renders to nothing).
+
+    Note this block *describes* the scope, it no longer *implements* it. The
+    enforcement lives in :func:`call_tools`, which injects ``product_id`` into
+    the search arguments regardless of what the model wrote. We still tell the
+    model about the scope for two reasons: so it stops asking "which product?",
+    and so it words its answer in terms of the focused product rather than
+    being surprised that retrieval came back narrow.
     """
     if not product_id:
         return ""
@@ -106,11 +124,13 @@ def _product_scope_text(product_id: str | None) -> str:
         "## Current focus\n\n"
         f"The user has selected the product `{product_id}` as their current focus, so "
         f"every question is about THIS product unless they explicitly name another. "
-        "Do NOT ask the user which product they mean — they have already told you. "
-        f'Call `search_documentation` with `product_id="{product_id}"` by default so '
-        "answers stay within this product's documentation. Only omit `product_id` "
-        "(searching all products) when the question clearly spans products or asks "
-        "to compare them.\n"
+        "Do NOT ask the user which product they mean — they have already told you.\n\n"
+        f"`search_documentation` is **hard-scoped to `{product_id}` by the server**: "
+        "every search you run this turn returns only this product's documentation, "
+        "whether or not you pass `product_id` yourself. Omitting it will not widen "
+        "the search, so do not try. If a search comes back empty, say plainly that "
+        f"you found nothing about it in `{product_id}`'s documentation and suggest "
+        "the user switch focus — never fall back on general knowledge.\n"
     )
 
 
@@ -208,6 +228,68 @@ def _to_openai_dict(m: Any) -> dict[str, Any]:
 # ─── Graph nodes ─────────────────────────────────────────────────────────
 
 
+def _drop_unanswered_tool_calls(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Strip trailing assistant messages whose tool calls were never run.
+
+    Only reachable on the :func:`final_answer` path. The budget check happens
+    *after* the model has already emitted its next batch of tool calls, so the
+    history at that point ends with an assistant message requesting tools that
+    the graph deliberately refused to execute. Sending that to the provider is
+    a dangling request, and Gemini answers it with an empty completion — which
+    is exactly the "no answer at all" symptom this node exists to prevent.
+
+    Dropping it leaves the history ending on real tool results, which is a
+    clean prompt for "answer from what you have".
+    """
+    end = len(messages)
+    while end > 0:
+        msg = messages[end - 1]
+        if msg.get("role") == "assistant" and msg.get("tool_calls"):
+            end -= 1
+            continue
+        break
+    return messages[:end]
+
+
+async def _run_llm(state: AgentState, *, offer_tools: bool) -> dict[str, Any]:
+    """Shared body of the two LLM nodes.
+
+    ``offer_tools=False`` is how :func:`final_answer` forces the model to stop
+    searching: with no tool catalogue in the request there is nothing for it to
+    call, so it must answer from the evidence already in the history.
+
+    ``max_input_tokens`` hands the message list to token_killer before the call.
+    Tool results here are large JSON blobs of retrieved chunks, so without this
+    a long conversation grows the request without bound.
+    """
+    tools = await mcp_clients.discover_all_tools() if offer_tools else None
+    history = [_to_openai_dict(m) for m in state["messages"]]
+    if not offer_tools:
+        # Withholding the tool catalogue is NOT enough to stop a model that is
+        # mid-loop. Verified against gemini-3.5-flash through LiteLLM: with
+        # prior tool calls in the history it keeps emitting `tool_calls` and
+        # returns `content: None`, so the user gets an empty bubble.
+        # `tool_choice="none"` is not honoured for Gemini either. An explicit
+        # instruction turn is what actually lands, and it works on any
+        # provider — so that is the mechanism, and `tools=None` above is just
+        # belt and braces.
+        history = _drop_unanswered_tool_calls(history)
+        history.append({"role": "user", "content": prompts.load("final-answer-nudge").render()})
+    messages = [
+        await _system_message(state.get("product_id")),
+        *history,
+    ]
+    response = await llm.acompletion(
+        messages,
+        tools=tools or None,
+        max_input_tokens=settings.agent_max_input_tokens,
+    )
+    msg = response.choices[0].message
+    # LiteLLM returns provider-specific message objects; pydantic dump
+    # normalises them to a plain dict that LangGraph's reducer expects.
+    return {"messages": [msg.model_dump() if hasattr(msg, "model_dump") else dict(msg)]}
+
+
 async def call_llm(state: AgentState) -> dict[str, Any]:
     """Ask the LLM for the next step.
 
@@ -219,16 +301,24 @@ async def call_llm(state: AgentState) -> dict[str, Any]:
     :func:`mcp_clients.discover_all_tools`), so this stays fast on
     subsequent turns.
     """
-    tools = await mcp_clients.discover_all_tools()
-    messages = [
-        await _system_message(state.get("product_id")),
-        *(_to_openai_dict(m) for m in state["messages"]),
-    ]
-    response = await llm.acompletion(messages, tools=tools or None)
-    msg = response.choices[0].message
-    # LiteLLM returns provider-specific message objects; pydantic dump
-    # normalises them to a plain dict that LangGraph's reducer expects.
-    return {"messages": [msg.model_dump() if hasattr(msg, "model_dump") else dict(msg)]}
+    return await _run_llm(state, offer_tools=True)
+
+
+async def final_answer(state: AgentState) -> dict[str, Any]:
+    """Terminal node reached when the tool-round budget is exhausted.
+
+    We could just END here, but that would leave the user with a dangling
+    assistant message full of tool calls and no prose. Instead we make one
+    more LLM call with the tool catalogue withheld, which turns "the agent
+    gave up" into "the agent answered with what it had". The wasted-token
+    problem is solved by *stopping the loop*, not by refusing to answer.
+    """
+    print(
+        f"[graph] tool-round budget ({settings.agent_max_tool_rounds}) reached — "
+        "forcing a final answer with no tools offered",
+        file=sys.stderr,
+    )
+    return await _run_llm(state, offer_tools=False)
 
 
 async def call_tools(state: AgentState) -> dict[str, Any]:
@@ -253,8 +343,10 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
         # Defensive: the conditional edge should have prevented this. If
         # we get here, treat it as "no work to do" so the graph still
         # closes cleanly instead of hanging.
-        return {"messages": []}
+        return {"messages": [], "tool_rounds": state.get("tool_rounds", 0)}
 
+    rounds = state.get("tool_rounds", 0) + 1
+    scope = state.get("product_id")
     tool_messages: list[dict[str, Any]] = []
     for tc in tool_calls:
         # Tool calls come in OpenAI shape: {id, type, function: {name, arguments}}.
@@ -277,6 +369,21 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
             )
             continue
 
+        # ── Scope enforcement ────────────────────────────────────────────
+        # The ONLY place in the codebase that rewrites a tool's arguments,
+        # and it earns the exception: the product the user picked in the UI
+        # gate has to actually constrain retrieval. Before this, the scope
+        # was only a sentence in the system prompt asking the model to pass
+        # product_id itself — which made the filter a matter of the model's
+        # goodwill. A prompt is not an access control. When a scope is set
+        # we overwrite whatever the model wrote (including nothing at all),
+        # so every search this turn is provably within that product.
+        #
+        # scope is None when the user explicitly chose "all products" — then
+        # the model keeps full control of the argument, as before.
+        if scope and name == _SCOPED_TOOL:
+            arguments["product_id"] = scope
+
         try:
             result = await mcp_clients.call_tool(name, arguments)
             content = result if isinstance(result, str) else json.dumps(result, default=str)
@@ -296,7 +403,7 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
             }
         )
 
-    return {"messages": tool_messages}
+    return {"messages": tool_messages, "tool_rounds": rounds}
 
 
 # ─── Routing ─────────────────────────────────────────────────────────────
@@ -305,13 +412,23 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
 def _route_after_llm(state: AgentState) -> str:
     """Decide what happens after :func:`call_llm` produces a message.
 
-    If the model asked for at least one tool → go run the tools.
-    Otherwise → we're done, end the graph.
+    Three outcomes:
+
+    - No tool calls → the model wrote prose, we're done.
+    - Tool calls, budget left → run them.
+    - Tool calls, budget spent → :func:`final_answer`, which asks once more
+      with no tools so the loop cannot continue.
+
+    The budget check is what stops a model that keeps re-searching from
+    burning a full-history LLM call plus a subprocess spawn per round until
+    LangGraph's recursion limit trips.
     """
     last = _to_openai_dict(state["messages"][-1]) if state["messages"] else {}
-    if last.get("tool_calls"):
-        return "tools"
-    return END
+    if not last.get("tool_calls"):
+        return END
+    if state.get("tool_rounds", 0) >= settings.agent_max_tool_rounds:
+        return "final"
+    return "tools"
 
 
 # ─── Graph construction ──────────────────────────────────────────────────
@@ -322,8 +439,16 @@ def build_graph() -> Any:
 
     Visual representation::
 
-        (start) ── llm ──▶ (tool_calls?) ──yes──▶ tools ──▶ llm ──▶ ...
-                              └──no──▶ END
+        (start) ── llm ──▶ (tool_calls?) ──no───▶ END
+                              │
+                              yes
+                              │
+                    (rounds < budget?) ──yes──▶ tools ──▶ llm ──▶ ...
+                              │
+                              no
+                              │
+                              ▼
+                          final ──▶ END      (one LLM call, no tools offered)
 
     Built once at import time via :func:`get_graph` so repeated requests
     don't pay the construction cost.
@@ -331,12 +456,19 @@ def build_graph() -> Any:
     graph = StateGraph(AgentState)
     graph.add_node("llm", call_llm)
     graph.add_node("tools", call_tools)
+    graph.add_node("final", final_answer)
     graph.set_entry_point("llm")
-    graph.add_conditional_edges("llm", _route_after_llm, {"tools": "tools", END: END})
-    # After running tools we always loop back to the LLM — it needs to
-    # see the tool results before deciding what to do next (call another
-    # tool, or write the final answer).
+    graph.add_conditional_edges(
+        "llm", _route_after_llm, {"tools": "tools", "final": "final", END: END}
+    )
+    # After running tools we loop back to the LLM — it needs to see the tool
+    # results before deciding what to do next (call another tool, or write the
+    # final answer). The loop is bounded by the budget check in
+    # _route_after_llm, so this edge can stay unconditional.
     graph.add_edge("tools", "llm")
+    # The forced answer is terminal by construction: no tools were offered,
+    # so there is nothing to route back to.
+    graph.add_edge("final", END)
     return graph.compile()
 
 
@@ -355,9 +487,4 @@ def get_graph() -> Any:
     return _compiled
 
 
-__all__ = ["AgentState", "build_graph", "get_graph"]
-
-
-# Touch ``settings`` so the linter doesn't flag it as unused while wiring
-# is in progress. Real settings access happens via the modules above.
-_ = settings.litellm_model
+__all__ = ["AgentState", "build_graph", "final_answer", "get_graph"]

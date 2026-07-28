@@ -1,0 +1,37 @@
+name: search-rounds-stay-bounded
+tags: [prompt:main-agent, skill:search_documentation, feature:loop-guard]
+description: |
+  Regression for the runaway tool loop observed on 2026-07-27: the agent kept
+  emitting search_documentation calls for roughly a minute, each round costing
+  a full-history model call plus an MCP subprocess spawn, until LangGraph's
+  default recursion limit tripped. Nothing in the graph capped it.
+
+  The graph now counts tool rounds and, on reaching
+  settings.agent_max_tool_rounds, routes to a final LLM call with no tools
+  offered (ADR 0009). main-agent rule 10 also tells the agent not to keep
+  rephrasing a search that came back thin.
+
+  This case asks something deliberately vague and unanswerable from the corpus
+  — the shape of question that used to trigger endless re-querying.
+
+input:
+  product_id: null
+  messages:
+    - role: user
+      content: "Tolong jelasin semua detail teknis tentang integrasi pihak ketiga yang kita pakai."
+
+expected:
+  must_call_tool:
+    - search_documentation
+  # The budget is 6; a well-behaved turn should finish well inside it. This
+  # asserts the guard holds, not that the agent is efficient.
+  max_tool_rounds: 6
+  must_not_contain:
+    - "Traceback"
+    - "RecursionError"
+    - "GraphRecursionError"
+
+  rubric:
+    - "The turn ends with prose the user can act on, not with a dangling tool call or an error message."
+    - "The agent does not repeat the same search query with only cosmetic rewording."
+    - "If the docs do not cover the question, the agent says so and asks the user to narrow it, rather than continuing to search."

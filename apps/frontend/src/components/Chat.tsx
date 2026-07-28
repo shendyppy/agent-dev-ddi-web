@@ -17,19 +17,26 @@
 import { useChat } from '@/hooks/use-chat';
 import { ChatHeader } from './chat/ChatHeader';
 import { MessageList } from './chat/MessageList';
-import { ProductScopePicker } from './chat/ProductScopePicker';
 import { ChatComposer } from './chat/ChatComposer';
 
 export default function Chat() {
   const chat = useChat();
 
   return (
-    <div class="flex h-screen flex-col overflow-hidden bg-background font-sans text-foreground">
+    // h-dvh, not h-screen: on mobile browsers the URL bar shrinks the visual
+    // viewport, and `100vh` keeps reporting the *unshrunk* height — so the
+    // composer used to sit below the fold behind the address bar. `h-screen`
+    // stays as the preceding declaration for engines without dvh support.
+    <div class="app-shell flex h-screen h-dvh flex-col overflow-hidden font-sans text-foreground">
       <ChatHeader
         copy={chat.copy}
         lang={chat.lang}
         onLangChange={chat.setLang}
         modelLabel={chat.modelLabel}
+        products={chat.products}
+        activeProductId={chat.activeProductId}
+        onScopeChange={chat.chooseScope}
+        scopeChosen={chat.scopeChosen}
       />
 
       <MessageList
@@ -47,16 +54,19 @@ export default function Chat() {
         onRetry={() =>
           chat.send(chat.messages.filter((m) => m.role === 'user').slice(-1)[0]?.content ?? '')
         }
+        products={chat.products}
+        productsLoading={chat.productsLoading}
+        scopeChosen={chat.scopeChosen}
+        onChooseScope={chat.chooseScope}
+        backendStatus={chat.backendStatus}
+        onRetryBootstrap={chat.retryBootstrap}
       />
 
-      <footer class="flex w-full flex-col items-center gap-2.5 border-t border-border bg-background px-6 pb-6 pt-4">
-        <ProductScopePicker
-          copy={chat.copy}
-          products={chat.products}
-          activeProductId={chat.activeProductId}
-          onSelect={chat.setActiveProductId}
-          loading={chat.productsLoading}
-        />
+      {/* Translucent + blurred so the transcript visibly passes *under* the
+          composer as it scrolls, which is what sells the layering. The border
+          is an edge-fade rule rather than a full-bleed border-t.
+          pb uses safe-area-inset so the bar clears the iOS home indicator. */}
+      <footer class="edge-fade edge-fade--top z-10 flex w-full flex-col items-center gap-2.5 bg-background/80 px-4 pt-3 backdrop-blur-xl sm:px-6 sm:pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-6">
         <ChatComposer
           copy={chat.copy}
           value={chat.input}
@@ -64,6 +74,7 @@ export default function Chat() {
           onSubmit={() => chat.send()}
           busy={chat.busy}
           textareaRef={chat.textareaRef}
+          enabled={chat.scopeChosen}
         />
       </footer>
     </div>

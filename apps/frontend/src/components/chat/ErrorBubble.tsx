@@ -14,7 +14,7 @@ export function ErrorBubble({
 }) {
   return (
     <div
-      class="flex flex-col gap-2 rounded-md border border-border border-l-[3px] border-l-destructive bg-muted p-4 text-[0.9375rem] text-foreground"
+      class="flex flex-col gap-2 rounded-xl border border-hairline border-l-[3px] border-l-destructive bg-card p-4 text-[0.9375rem] text-foreground shadow-panel"
       role="alert"
     >
       <p class="m-0">{copy.errorPrefix}</p>
