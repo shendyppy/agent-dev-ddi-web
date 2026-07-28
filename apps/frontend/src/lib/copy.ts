@@ -35,6 +35,10 @@ export type Copy = {
   errorRetry: string;
   // Granular error messages that replace the raw exception string.
   errorRateLimit: string;
+  // A per-DAY quota, not a momentary rate limit. Needs its own copy because
+  // "wait a moment and try again" is actively wrong advice — the limit does
+  // not clear until the quota resets.
+  errorQuotaExhausted: string;
   errorServiceUnavailable: string;
   errorGeneric: string;
   // Shown when the agent hit its tool-round budget — a distinct situation from
@@ -50,9 +54,20 @@ export type Copy = {
   gateAllProducts: string;
   gateAllProductsHint: string;
   gateLoading: string;
+  // Backend still booting / not reachable. `just dev` starts FE and BE
+  // together and the FE always wins the race, so this is the normal first
+  // second of a dev session, not an exceptional failure.
+  gateConnecting: string;
+  gateUnreachableHeading: string;
+  gateUnreachableBody: string;
+  gateRetry: string;
   scopeChangeAria: string;
   composerLockedPlaceholder: string;
   citationSources: string;
+  // Voice input (Web Speech API). The button only renders when the browser
+  // supports it, so there is no "unsupported" string to show.
+  voiceLabel: string;
+  voiceStopLabel: string;
 };
 
 export const COPY: Record<Language, Copy> = {
@@ -82,6 +97,8 @@ export const COPY: Record<Language, Copy> = {
     errorStreamDropped: 'Koneksinya keputus. Coba lagi, ya?',
     errorRetry: 'Coba lagi',
     errorRateLimit: 'Asisten lagi sibuk banget. Tunggu sebentar, lalu coba lagi.',
+    errorQuotaExhausted:
+      'Jatah pemakaian harian model sudah habis, jadi nyoba lagi sekarang nggak akan jalan. Jatahnya balik lagi besok.',
     errorServiceUnavailable: 'Layanannya lagi nggak tersedia. Coba lagi beberapa saat lagi, ya.',
     errorGeneric: 'Ada yang nggak beres. Coba kirim lagi pertanyaannya.',
     errorLoopGuard:
@@ -95,9 +112,16 @@ export const COPY: Record<Language, Copy> = {
     gateAllProducts: 'Semua produk',
     gateAllProductsHint: 'Buat pertanyaan yang membandingkan beberapa produk',
     gateLoading: 'Lagi ambil daftar produk…',
+    gateConnecting: 'Lagi nyambung ke server…',
+    gateUnreachableHeading: 'Servernya belum bisa dihubungi',
+    gateUnreachableBody:
+      'Daftar produknya belum bisa diambil. Kalau kamu lagi menjalankan `just dev`, biasanya server backend-nya masih nyala — tunggu sebentar lalu coba lagi.',
+    gateRetry: 'Coba lagi',
     scopeChangeAria: 'Ganti fokus produk',
     composerLockedPlaceholder: 'Pilih fokus produk dulu di atas',
     citationSources: 'Sumber',
+    voiceLabel: 'Tanya pakai suara',
+    voiceStopLabel: 'Berhenti merekam',
   },
   en: {
     appTitle: 'Documentation Agent',
@@ -125,6 +149,8 @@ export const COPY: Record<Language, Copy> = {
     errorStreamDropped: 'The connection dropped. Want to try again?',
     errorRetry: 'Try again',
     errorRateLimit: 'The assistant is swamped right now. Give it a moment and try again.',
+    errorQuotaExhausted:
+      "The model's daily usage allowance is used up, so trying again now won't help. It resets tomorrow.",
     errorServiceUnavailable: 'The service is temporarily unavailable. Please try again shortly.',
     errorGeneric: 'Something went wrong. Please send your question again.',
     errorLoopGuard:
@@ -138,9 +164,16 @@ export const COPY: Record<Language, Copy> = {
     gateAllProducts: 'All products',
     gateAllProductsHint: 'For questions that compare several products',
     gateLoading: 'Loading the product list…',
+    gateConnecting: 'Connecting to the server…',
+    gateUnreachableHeading: "Can't reach the server yet",
+    gateUnreachableBody:
+      "The product list couldn't be loaded. If you're running `just dev`, the backend is probably still starting up — give it a moment and try again.",
+    gateRetry: 'Try again',
     scopeChangeAria: 'Change product focus',
     composerLockedPlaceholder: 'Pick a product focus above first',
     citationSources: 'Sources',
+    voiceLabel: 'Ask by voice',
+    voiceStopLabel: 'Stop recording',
   },
 };
 

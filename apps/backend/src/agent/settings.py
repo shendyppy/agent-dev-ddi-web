@@ -43,6 +43,35 @@ class Settings(BaseSettings):
     litellm_max_attempts: int = 4
     litellm_retry_max_wait: float = 20.0  # cap on a single backoff sleep (s)
 
+    # Offline UI mode. When true, agent.llm short-circuits every completion to
+    # a fixture in agent/fixtures/ and NO provider request is made.
+    #
+    # Why this exists: the Gemini key is free tier, capped at 20 requests per
+    # DAY per model. Frontend work burns that in a handful of reloads and then
+    # the chat is dead until the quota resets — which makes it impossible to
+    # check how an answer *renders*. The fixture is also strictly better for
+    # that job than a real model: it is deterministic and it deliberately
+    # exercises every markdown branch the transcript can hit.
+    #
+    # Dev-only. It bypasses the model entirely, so never enable it anywhere a
+    # real answer is expected — including eval runs, which would all trivially
+    # "pass" against the fixture.
+    llm_fake_mode: bool = False
+    llm_fake_latency_seconds: float = 0.6  # so the typing indicator is visible
+
+    # When true (the default), fake mode first emits a real
+    # `search_documentation` tool call, so the graph queries the LOCAL ChromaDB
+    # index and the answer is built from chunks that actually exist in the
+    # corpus — real text, real `Sources:` paths. Retrieval is free, so this
+    # costs nothing and additionally exercises the tool-chip and
+    # message-grouping UI that a single-shot fixture never reaches.
+    #
+    # Set false to get the static markdown fixture instead, which is the better
+    # choice when the thing under test is markdown rendering itself (it covers
+    # every element on purpose). Fake mode also falls back to the fixture
+    # automatically when the index is missing or empty.
+    llm_fake_use_retrieval: bool = True
+
     # Agent loop guard (applied in agent.graph). The graph loops
     # llm → tools → llm for as long as the model keeps asking for tools, and
     # nothing in that loop is self-limiting: a model that keeps re-searching

@@ -17,10 +17,57 @@ const base = {
   "aria-hidden": "true" as const,
 };
 
+/**
+ * DocumentIcon — the brand mark (header tile + assistant avatar).
+ *
+ * FILLED, not stroked. The previous version was a 2px-stroke outline on a
+ * 24-unit viewBox, rendered at 15px. That scales the stroke down to ~1.25 CSS
+ * px, which lands on a fractional device pixel and renders as a grey, fuzzy
+ * scribble — worst of all on the maroon header tile, where a hairline outline
+ * has almost nothing to hold onto. A filled silhouette keeps its shape at any
+ * size because there is no stroke to shrink.
+ *
+ * It was also mis-centred: the old path spanned x 4→20 in a 24 box, so the
+ * glyph sat 1 unit left of centre inside the tile. This one spans x 5→19 and
+ * y 2→22 — even margins on both axes.
+ *
+ * Single path with fill-rule="evenodd": the two inner rectangles are subpaths,
+ * so they punch through as knocked-out text lines instead of needing separate
+ * background-coloured shapes (which would break on any tile colour).
+ */
 export const DocumentIcon = ({ className }: IconProps) => (
+  <svg class={className} viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+    <path
+      fill-rule="evenodd"
+      clip-rule="evenodd"
+      d="M7 2h7v4.5A1.5 1.5 0 0 0 15.5 8H19v12a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Zm1 10h8v1.7H8V12Zm0 3.6h5.5v1.7H8v-1.7Z"
+    />
+    {/* The folded corner, carried at reduced opacity so the fold reads as a
+        crease rather than a second solid mass competing with the body. */}
+    <path d="M15 2.4 18.9 6.6H16.2A1.2 1.2 0 0 1 15 5.4V2.4Z" opacity="0.55" />
+  </svg>
+);
+
+/** Concentric rings — marks the active retrieval scope ("focus"). */
+export const TargetIcon = ({ className }: IconProps) => (
   <svg class={className} {...base}>
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-    <polyline points="14 2 14 8 20 8" />
+    <circle cx="12" cy="12" r="8" />
+    <circle cx="12" cy="12" r="3" />
+  </svg>
+);
+
+/** Disclosure chevron for the scope pill. */
+export const ChevronDownIcon = ({ className }: IconProps) => (
+  <svg class={className} {...base}>
+    <path d="m6 9 6 6 6-6" />
+  </svg>
+);
+
+/** Stacked planes — marks the "all products" (cross-product) scope option. */
+export const LayersIcon = ({ className }: IconProps) => (
+  <svg class={className} {...base}>
+    <path d="M12 3 3 8l9 5 9-5-9-5Z" />
+    <path d="M3 13l9 5 9-5" />
   </svg>
 );
 

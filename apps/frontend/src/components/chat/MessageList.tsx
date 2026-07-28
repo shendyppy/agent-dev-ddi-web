@@ -24,6 +24,7 @@ import { TypingIndicator } from './TypingIndicator';
 import { ErrorBubble } from './ErrorBubble';
 import { CitationList } from './CitationList';
 import { renderMarkdown, extractCitations, type Message, type Product } from '@/lib/chat';
+import type { BackendStatus } from '@/hooks/use-chat';
 import type { Copy } from '@/lib/copy';
 
 type MessageListProps = {
@@ -41,6 +42,8 @@ type MessageListProps = {
   productsLoading: boolean;
   scopeChosen: boolean;
   onChooseScope: (id: string | null) => void;
+  backendStatus: BackendStatus;
+  onRetryBootstrap: () => void;
 };
 
 /** Markdown body for an assistant message with an optional citation strip.
@@ -75,11 +78,31 @@ export function MessageList({
   productsLoading,
   scopeChosen,
   onChooseScope,
+  backendStatus,
+  onRetryBootstrap,
 }: MessageListProps) {
+  // An assistant message with no text and no tool_calls has nothing to draw —
+  // it is a streaming placeholder. Dropping it up front keeps the grouping and
+  // spacing logic below honest about what the previous visible row actually is.
+  const visibleMessages = messages.filter(
+    (m) =>
+      m.role !== 'assistant' ||
+      (m.content ?? '').trim().length > 0 ||
+      !!m.tool_calls?.length,
+  );
+  // Must be false on an empty transcript: `undefined !== 'user'` would be true
+  // and would hide the avatar on the very first typing indicator.
+  const lastIsAssistant =
+    visibleMessages.length > 0 && visibleMessages[visibleMessages.length - 1].role !== 'user';
+
   return (
-    <div class="flex flex-1 flex-col items-center overflow-y-auto px-6 py-6">
+    <div class="flex flex-1 flex-col items-center overflow-y-auto px-4 py-5 sm:px-6 sm:py-6">
+      {/* No `gap` on this column: spacing is per-row so a grouped follow-up can
+          sit tighter (mt-2) than a genuine turn change (mt-5). A uniform gap
+          made an answer plus its two tool chips look like three separate
+          replies. */}
       <div
-        class="flex w-full max-w-[760px] flex-col gap-5 pb-10"
+        class="flex w-full max-w-[760px] flex-col pb-10"
         role="log"
         aria-live="polite"
         aria-atomic="false"
@@ -91,46 +114,68 @@ export function MessageList({
             products={products}
             loading={productsLoading}
             onChoose={onChooseScope}
+            backendStatus={backendStatus}
+            onRetryBootstrap={onRetryBootstrap}
           />
         ) : messages.length === 0 ? (
           <WelcomeState copy={copy} onPickPrompt={onPickPrompt} />
         ) : (
-          messages.map((m) => {
+          // Filter BEFORE mapping: grouping and spacing depend on the previous
+          // *rendered* row, and an assistant message carrying neither text nor
+          // tool_calls renders nothing. Deciding that inside the map would make
+          // a skipped message still count as the predecessor, so a real reply
+          // after it would be treated as a grouped follow-up.
+          visibleMessages.map((m, i) => {
+            const prev = visibleMessages[i - 1];
+            // Both 'assistant' and 'tool' render on the assistant side.
+            const grouped = !!prev && prev.role !== 'user' && m.role !== 'user';
+            const spacing = i === 0 ? '' : grouped ? 'mt-2' : 'mt-5';
+
             if (m.role === 'user') {
-              return <UserBubble key={m.id} content={m.content ?? ''} />;
+              return (
+                <div key={m.id} class={spacing}>
+                  <UserBubble content={m.content ?? ''} />
+                </div>
+              );
             }
 
             if (m.role === 'tool') {
               return (
-                <AssistantRow key={m.id}>
-                  <ToolChip kind="result" label={copy.toolResult(m.content?.length ?? 0)} />
-                </AssistantRow>
+                <div key={m.id} class={spacing}>
+                  <AssistantRow grouped={grouped}>
+                    <ToolChip kind="result" label={copy.toolResult(m.content?.length ?? 0)} />
+                  </AssistantRow>
+                </div>
               );
             }
 
-            // assistant
             const hasContent = (m.content ?? '').trim().length > 0;
-            const hasToolCalls = !!m.tool_calls?.length;
-            if (!hasContent && !hasToolCalls) return null;
 
             return (
-              <AssistantRow key={m.id}>
-                {m.isError ? (
-                  <ErrorBubble content={m.content ?? ''} copy={copy} onRetry={onRetry} />
-                ) : hasContent ? (
-                  <MarkdownContent content={m.content as string} copy={copy} />
-                ) : (
-                  <ToolChip kind="calling" label={copy.toolCalling} />
-                )}
-              </AssistantRow>
+              <div key={m.id} class={spacing}>
+                <AssistantRow grouped={grouped}>
+                  {m.isError ? (
+                    <ErrorBubble content={m.content ?? ''} copy={copy} onRetry={onRetry} />
+                  ) : hasContent ? (
+                    <MarkdownContent content={m.content as string} copy={copy} />
+                  ) : (
+                    <ToolChip kind="calling" label={copy.toolCalling} />
+                  )}
+                </AssistantRow>
+              </div>
             );
           })
         )}
 
         {busy && (
-          <AssistantRow>
-            <TypingIndicator label={typingLabel} />
-          </AssistantRow>
+          // Grouped whenever the transcript already ends on the assistant side,
+          // so the indicator continues the current reply instead of stamping a
+          // second avatar directly beneath the first.
+          <div class={visibleMessages.length === 0 ? '' : lastIsAssistant ? 'mt-2' : 'mt-5'}>
+            <AssistantRow streaming grouped={lastIsAssistant}>
+              <TypingIndicator label={typingLabel} />
+            </AssistantRow>
+          </div>
         )}
 
         {/* Scroll sentinel — useChat scrolls this into view on new messages. */}

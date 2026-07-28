@@ -46,12 +46,15 @@ at the same time. Drift between the two is the most common SSE bug.
 from __future__ import annotations
 
 import json
+import sys
 import traceback
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from fastapi import FastAPI
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -61,10 +64,42 @@ from . import mcp_clients
 from .graph import get_graph
 from .settings import settings
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Warm the MCP tool registry before the server accepts any traffic.
+
+    Discovery spawns one subprocess per skill server and asks each for its
+    tool list. It used to happen lazily on the first request that needed a
+    tool — which meant an early ``GET /api/products`` could arrive while
+    ``list_products`` was not registered yet, get a KeyError, and be reported
+    to the browser as ``200 {"products": []}``. The frontend cannot tell that
+    apart from a genuinely empty catalogue, so the scope gate rendered with no
+    products and the conversation could not start.
+
+    Uvicorn only begins listening once lifespan startup returns, so warming
+    here removes the window entirely rather than papering over it. A few extra
+    seconds of boot is the right trade for never serving a wrong answer.
+
+    A failure here is logged, not raised: the server still starts, and the
+    endpoints below report 503 until discovery succeeds.
+    """
+    try:
+        tools = await mcp_clients.discover_all_tools()
+        # Catalogue entries are OpenAI-shaped: {"type": "function", "function": {...}}.
+        names = sorted(t.get("function", {}).get("name", "?") for t in tools)
+        print(f"[server] MCP tools ready: {names}", file=sys.stderr)
+    except Exception:  # noqa: BLE001 — startup must not be fatal
+        traceback.print_exc()
+        print("[server] MCP discovery failed at startup — /api/products will 503", file=sys.stderr)
+    yield
+
+
 app = FastAPI(
     title="Documentation Agent API",
     description="Orchestrator for the Documentation Agent chatbot. See docs/architecture.md.",
     version="0.1.0",
+    lifespan=lifespan,
 )
 
 # CORS — allow the Astro dev server (and any localhost port, since
@@ -163,16 +198,32 @@ async def products() -> dict[str, Any]:
     exists. The skill reads distinct product metadata from the ChromaDB index,
     so a freshly added doc shows up here after ``just index``.
 
-    On any failure (index not built, skill error) we return an empty list
-    rather than erroring, so the UI degrades to "no picker" instead of a
-    broken page.
+    Failure modes are NOT equivalent, and collapsing them was a real bug:
+
+    - The skill ran and found nothing (index not built) → ``{"products": []}``
+      with 200. That is a true answer, and the FE shows its "all products"
+      escape hatch.
+    - The skill could not run (discovery incomplete, server crashed) → **503**.
+      This used to return 200 with an empty list, which the browser cannot
+      distinguish from the case above: the scope gate rendered with no product
+      cards and the user was stuck, permanently, because a 200 gives the client
+      no reason to ask again. A 503 says "not now, ask later", which is both
+      true and actionable — the FE retries it with backoff.
     """
     try:
         raw = await mcp_clients.call_tool("list_products", {})
-        return json.loads(raw) if raw else {"products": []}
-    except Exception:  # noqa: BLE001 — picker is best-effort, never fatal
+    except KeyError as exc:
+        # Tool absent from the registry: discovery has not completed or the
+        # skill is misregistered. Transient from the caller's point of view.
         traceback.print_exc()
-        return {"products": []}
+        raise HTTPException(status_code=503, detail=f"product catalogue not ready: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=503, detail=f"product catalogue unavailable: {type(exc).__name__}"
+        ) from exc
+
+    return json.loads(raw) if raw else {"products": []}
 
 
 # ─── The chat endpoint ───────────────────────────────────────────────────

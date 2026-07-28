@@ -41,6 +41,83 @@ export type Product = {
 
 export const API_BASE = import.meta.env.PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
 
+// ─── Bootstrap fetch with retry ───────────────────────────────────────
+//
+// `just dev` starts the frontend and the backend concurrently, and the
+// frontend always wins: Astro is serving in ~2s while uvicorn is still
+// importing the agent graph and loading the embedding model. Every bootstrap
+// GET therefore lands on a closed port on first paint.
+//
+// Fetching once and swallowing the failure (which is what this used to do)
+// turns that transient race into a permanent broken state: the model chip
+// stays blank forever, and — worse — the product list resolves to `[]`, so the
+// scope gate renders with no product cards and the user cannot get past it
+// without reloading. Nothing recovers on its own, because nothing tries again.
+//
+// So: retry with exponential backoff until the backend answers.
+
+const RETRY_BASE_MS = 300;
+const RETRY_CAP_MS = 5_000;
+
+/** A response the server actually produced. Distinct from a network failure. */
+export class HttpError extends Error {
+  constructor(readonly status: number) {
+    super(`HTTP ${status}`);
+    this.name = 'HttpError';
+  }
+}
+
+function delay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true },
+    );
+  });
+}
+
+/**
+ * GET JSON, retrying while the backend looks like it is still coming up.
+ *
+ * Retries a network error (port not open yet) or a 5xx (process up, not ready).
+ * Does NOT retry a 4xx: that is the server giving a considered answer about
+ * this request, and repeating it just repeats the same mistake.
+ *
+ * Backoff is capped at 5s so a backend that takes a while to boot is still
+ * picked up promptly, without hammering the port while it is closed.
+ */
+export async function fetchJsonWithRetry<T>(
+  path: string,
+  { signal, maxAttempts = 12 }: { signal?: AbortSignal; maxAttempts?: number } = {},
+): Promise<T> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const res = await fetch(`${API_BASE}${path}`, { signal });
+      if (res.ok) return (await res.json()) as T;
+      if (res.status < 500) throw new HttpError(res.status); // caller's problem, not a race
+      lastError = new HttpError(res.status);
+    } catch (err) {
+      // An abort is the component unmounting — propagate, never retry it.
+      if (err instanceof DOMException && err.name === 'AbortError') throw err;
+      if (err instanceof HttpError && err.status < 500) throw err;
+      lastError = err;
+    }
+
+    if (attempt < maxAttempts - 1) {
+      await delay(Math.min(RETRY_BASE_MS * 2 ** attempt, RETRY_CAP_MS), signal);
+    }
+  }
+
+  throw lastError ?? new Error('unreachable');
+}
+
 // ─── Error copy mapper ────────────────────────────────────────────────
 // Converts raw exception / SSE error strings into human-readable copy so the
 // component's catch and SSE branches never surface a status code or stack
@@ -55,6 +132,15 @@ export function mapErrorToFriendly(raw: string, copy: Copy): string {
   // advice that definitely will not help, since the same question loops again.
   if (s.includes('recursion') || s.includes('graphrecursion')) {
     return copy.errorLoopGuard;
+  }
+  // A per-DAY quota must be checked BEFORE the generic 429 branch, which it
+  // would otherwise match. The distinction is not cosmetic: errorRateLimit
+  // tells the user to wait a moment and retry, and for a daily cap that is the
+  // one thing guaranteed not to work. The provider payload carries the period
+  // in its quotaId (e.g. "GenerateRequestsPerDayPerProjectPerModel-FreeTier"),
+  // which reaches us inside the flattened exception string.
+  if (s.includes('perday') || s.includes('per day') || s.includes('requests per day')) {
+    return copy.errorQuotaExhausted;
   }
   if (s.includes('429') || s.includes('rate') || s.includes('quota') || s.includes('resource_exhausted')) {
     return copy.errorRateLimit;
