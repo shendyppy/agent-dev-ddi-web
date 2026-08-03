@@ -1,4 +1,10 @@
-# Dokumentasi Singkat Fitur Aplikasi Learning Hub Mobile
+---
+product_id: learning hub mobile
+product_name: Learning Hub Mobile
+status: active
+---
+
+# Learning Hub Mobile
 
 Dokumen ini menjelaskan fitur-fitur utama aplikasi secara ringkas: nama fitur, fungsi, dan konten yang ditampilkan.
 

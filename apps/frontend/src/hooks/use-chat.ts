@@ -7,6 +7,7 @@
  * product catalogue + active scope, and the send() round-trip (fetch + SSE).
  */
 import { useState, useRef, useEffect, useMemo, useCallback } from 'preact/hooks';
+import type { User } from '@supabase/supabase-js';
 import { COPY, loadInitialLang, type Language } from '@/lib/copy';
 import {
   API_BASE,
@@ -16,12 +17,50 @@ import {
   type Message,
   type Product,
 } from '@/lib/chat';
+import { supabase } from '@/lib/supabase';
+
+/** Keep last 20 turns; truncate long assistant responses to 1 000 chars so the
+ *  context window stays manageable when continuing from saved history. */
+function compressHistory(msgs: Message[]): { role: string; content: string }[] {
+  const ASSISTANT_MAX = 1000;
+  const WINDOW = 20;
+  return msgs
+    .filter((m) => m.role === 'user' || (m.role === 'assistant' && m.content))
+    .slice(-WINDOW)
+    .map((m) => ({
+      role: m.role,
+      content:
+        m.role === 'assistant' && (m.content?.length ?? 0) > ASSISTANT_MAX
+          ? m.content!.slice(0, ASSISTANT_MAX) + '…'
+          : (m.content ?? ''),
+    }));
+}
+
+async function saveHistory(
+  userId: string,
+  sessionId: string | null,
+  productScope: string | null,
+  newMessages: Message[],
+) {
+  const { data: session, error: sessionErr } = await supabase
+    .from('chat_sessions')
+    .upsert({ id: sessionId ?? undefined, user_id: userId, product_scope: productScope })
+    .select('id')
+    .single();
+  if (sessionErr || !session) return;
+
+  if (!newMessages.length) return;
+
+  await supabase.from('chat_messages').insert(
+    newMessages.map((m) => ({ session_id: session.id, role: m.role, content: m.content ?? '' })),
+  );
+}
 
 /** Bootstrap connectivity, surfaced so the gate can explain itself instead of
  *  rendering as an empty, dead screen while the backend is still booting. */
 export type BackendStatus = 'connecting' | 'ready' | 'unreachable';
 
-export function useChat() {
+export function useChat(user: User | null = null) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
@@ -150,15 +189,14 @@ export function useChat() {
     setBusy(true);
 
     let receivedDone = false;
+    const agentMessages: Message[] = [];
 
     try {
       const res = await fetch(`${API_BASE}/api/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          messages: historyForRequest
-            .filter((m) => m.role === 'user' || (m.role === 'assistant' && m.content))
-            .map((m) => ({ role: m.role, content: m.content ?? '' })),
+          messages: compressHistory(historyForRequest),
           session_id: sessionId,
           product_id: activeProductId,
         }),
@@ -170,6 +208,7 @@ export function useChat() {
         if (event === 'message') {
           try {
             const msg: Message = JSON.parse(data);
+            if (msg.role === 'assistant' && msg.content) agentMessages.push(msg);
             setMessages((prev) => [...prev, withId(msg)]);
           } catch {
             setMessages((prev) => [
@@ -185,6 +224,12 @@ export function useChat() {
         } else if (event === 'done') {
           receivedDone = true;
           if (data) setSessionId(data);
+          if (user) {
+            // fire-and-forget: history failure must not affect the chat UX
+            saveHistory(user.id, data || null, activeProductId, [userMessage, ...agentMessages]).catch(
+              () => {},
+            );
+          }
         }
       }
 
@@ -236,5 +281,19 @@ export function useChat() {
     typingLabel,
     endOfMessagesRef,
     textareaRef,
+    loadSession(msgs: Message[], productId: string | null, sid: string) {
+      setMessages(msgs.map(withId));
+      setSessionId(sid);
+      if (productId !== undefined) {
+        setActiveProductId(productId);
+        setScopeChosen(true);
+      }
+    },
+    newChat() {
+      setMessages([]);
+      setSessionId(null);
+      setScopeChosen(false);
+      setActiveProductId(null);
+    },
   };
 }
