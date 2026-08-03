@@ -68,6 +68,18 @@ export type Copy = {
   // supports it, so there is no "unsupported" string to show.
   voiceLabel: string;
   voiceStopLabel: string;
+  loginWithGoogle: string;
+  logoutLabel: string;
+  logoutAria: string;
+  logoutConfirmTitle: string;
+  logoutConfirmBody: string;
+  logoutConfirmYes: string;
+  logoutConfirmCancel: string;
+  historyLabel: string;
+  historyAria: string;
+  historyEmpty: string;
+  historyLoading: string;
+  historyNewChat: string;
 };
 
 export const COPY: Record<Language, Copy> = {
@@ -122,6 +134,18 @@ export const COPY: Record<Language, Copy> = {
     citationSources: 'Sumber',
     voiceLabel: 'Tanya pakai suara',
     voiceStopLabel: 'Berhenti merekam',
+    loginWithGoogle: 'Masuk dengan Google',
+    logoutLabel: 'Keluar',
+    logoutAria: 'Keluar dari akun',
+    logoutConfirmTitle: 'Yakin mau keluar?',
+    logoutConfirmBody: 'Riwayat percakapan tetap tersimpan dan bisa diakses lagi setelah masuk.',
+    logoutConfirmYes: 'Ya, keluar',
+    logoutConfirmCancel: 'Batal',
+    historyLabel: 'Riwayat',
+    historyAria: 'Buka riwayat percakapan',
+    historyEmpty: 'Belum ada riwayat percakapan.',
+    historyLoading: 'Memuat riwayat…',
+    historyNewChat: 'Percakapan baru',
   },
   en: {
     appTitle: 'Documentation Agent',
@@ -174,6 +198,18 @@ export const COPY: Record<Language, Copy> = {
     citationSources: 'Sources',
     voiceLabel: 'Ask by voice',
     voiceStopLabel: 'Stop recording',
+    loginWithGoogle: 'Sign in with Google',
+    logoutLabel: 'Sign out',
+    logoutAria: 'Sign out of your account',
+    logoutConfirmTitle: 'Sign out?',
+    logoutConfirmBody: 'Your conversation history is saved and will be accessible once you sign back in.',
+    logoutConfirmYes: 'Yes, sign out',
+    logoutConfirmCancel: 'Cancel',
+    historyLabel: 'History',
+    historyAria: 'Open conversation history',
+    historyEmpty: 'No conversation history yet.',
+    historyLoading: 'Loading history…',
+    historyNewChat: 'New chat',
   },
 };
 
