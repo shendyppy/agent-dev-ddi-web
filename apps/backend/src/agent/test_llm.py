@@ -377,8 +377,11 @@ class TestAcompletionDegradesInsteadOfFailing:
     error bubble."""
 
     @pytest.fixture(autouse=True)
-    def _clean_state(self) -> None:
+    def _clean_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         reset_fallback()
+        # CI exports LLM_FAKE_MODE=true for the eval suite, which would make
+        # acompletion skip the provider before the failure under test happens.
+        monkeypatch.setattr(llm_module.settings, "llm_fake_mode", False)
 
     async def _acompletion_raising(
         self, monkeypatch: pytest.MonkeyPatch, exc: BaseException
