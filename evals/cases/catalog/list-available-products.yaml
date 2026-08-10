@@ -1,0 +1,36 @@
+name: list-available-products
+tags: [prompt:main-agent, skill:list_products]
+description: |
+  Coverage for the list_products skill, which had no eval case at all despite
+  being one of four shipped skills and the thing that populates the FE product
+  picker.
+
+  When the user asks what the assistant can help with, the catalogue must come
+  from the tool — list_products reads distinct product_id/product_name metadata
+  straight off the Chroma index — not from the model's memory of the system
+  prompt. Those two drift apart the moment a doc is added, and the model's
+  version is the one that goes stale silently.
+
+input:
+  messages:
+    - role: user
+      content: "Produk apa aja sih yang bisa kamu bantu jelasin?"
+
+expected:
+  must_call_tool:
+    - list_products
+  # Named products that exist in the index today. Any one is enough — the point
+  # is that a real catalogue reached the answer, not that all of it did.
+  must_contain_any:
+    - "Klob"
+    - "PortrAI"
+    - "TEP CMS"
+    - "Acelents"
+  must_not_contain:
+    - "Example Product"     # the _template placeholder must never surface
+    - "I don't have access"
+
+  rubric:
+    - "The product list comes from the tool result, not from prose the model recalled."
+    - "Answer is in Bahasa Indonesia, matching the question."
+    - "The assistant offers a next step (pick one to ask about) rather than only dumping names."

@@ -18,6 +18,11 @@ input:
 expected:
   must_call_tool:
     - search_documentation
+  # Retrieval, asserted separately from the answer text. The prose checks below
+  # can pass on a lucky guess; this one cannot — either the run instructions
+  # reached the model or they did not.
+  must_retrieve_any:
+    - docs/products/acelents/product.md
   must_contain_any:
     - "pnpm dev"
     - "pnpm install"
@@ -25,6 +30,9 @@ expected:
     - "docker-compose"      # invented — Acelents has no Docker
     - "docker compose"
     - "db:migrate"          # invented — static site, no DB
+    # Matched on a leading word boundary, so this does NOT trip on the correct
+    # `pnpm install` — see checks.mentions(). Plain substring matching made this
+    # case impossible to pass.
     - "npm install"         # docs use pnpm, not npm
     - "yarn install"
     - "localhost:3000"      # wrong port — Astro dev serves 4321
@@ -35,3 +43,28 @@ expected:
     - "Any Sources: line cites only real paths returned by search (e.g. docs/products/acelents/product.md), never an invented file."
     - "If a local URL/port is mentioned it is the Astro dev port 4321, not 3000."
     - "Answer is in Bahasa Indonesia (the user asked in Indonesian) and under 200 words."
+
+known_gap:
+  checks: [must_retrieve_any]
+  tracked_in: "Fase 2a — ADR-0010 (multilingual embeddings)"
+  reason: >
+    Retrieval cannot find these docs from the question as the user wrote it.
+    Measured 2026-08-07: searching the raw Indonesian string "Gimana cara
+    jalanin Acelents Website di lokal?" ranks tep-cms first (0.482) and
+    klob-mobile second (0.450), and docs/products/acelents/product.md — the file
+    holding the actual run steps — is not in the top 5 at all. The embedder is
+    BAAI/bge-small-en-v1.5, English-only, so an Indonesian query sits roughly
+    equidistant from every Indonesian chunk; for scale, the off-topic refusal
+    case ("Project Zephyr", a product that does not exist) still scores 0.383.
+
+    A full `just eval` run passes this check, and that is the part worth
+    understanding rather than celebrating: the model rewrote the query into
+    English first — the trace shows it searching "run locally local development
+    setup how to run" — and English against this index works. So the RAG
+    pipeline is being rescued by the LLM, invisibly, at the cost of an extra
+    tool round, and the rescue disappears with a weaker or cheaper model.
+
+    `--fast` searches the raw question verbatim (llm._fake_completion), which is
+    why it is the mode that exposes this. Fix is the embedding swap. Do not
+    relax the assertion to match current behaviour, and do not "fix" it by
+    leaning harder on query rewriting.

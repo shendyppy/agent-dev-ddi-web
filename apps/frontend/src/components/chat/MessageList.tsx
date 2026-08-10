@@ -23,7 +23,14 @@ import { ToolChip } from './ToolChip';
 import { TypingIndicator } from './TypingIndicator';
 import { ErrorBubble } from './ErrorBubble';
 import { CitationList } from './CitationList';
-import { renderMarkdown, extractCitations, type Message, type Product } from '@/lib/chat';
+import { EvidencePanel } from './EvidencePanel';
+import {
+  renderMarkdown,
+  extractCitations,
+  type Message,
+  type Product,
+  type Retrieval,
+} from '@/lib/chat';
 import type { BackendStatus } from '@/hooks/use-chat';
 import type { Copy } from '@/lib/copy';
 
@@ -46,14 +53,25 @@ type MessageListProps = {
   onRetryBootstrap: () => void;
 };
 
-/** Markdown body for an assistant message with an optional citation strip.
+/** Markdown body for an assistant message, with its evidence and citations.
  *
  *  `extractCitations` strips the "Sources:" block from the raw content before
  *  passing it to `renderMarkdown`, then `CitationList` renders the sources in a
  *  dedicated, styled strip below the answer. Both steps are safe to call on
  *  every render because `renderMarkdown` is memoised and `extractCitations` is
- *  a cheap regex. */
-function MarkdownContent({ content, copy }: { content: string; copy: Copy }) {
+ *  a cheap regex.
+ *
+ *  `EvidencePanel` sits between the two: answer, then why we believe it, then
+ *  where it came from. It renders nothing when the turn ran no search. */
+function MarkdownContent({
+  content,
+  copy,
+  retrieval,
+}: {
+  content: string;
+  copy: Copy;
+  retrieval?: Retrieval;
+}) {
   const { body, citations } = extractCitations(content);
   return (
     <div class="flex flex-col">
@@ -61,6 +79,7 @@ function MarkdownContent({ content, copy }: { content: string; copy: Copy }) {
         class="markdown-body text-[1rem] leading-relaxed text-foreground"
         dangerouslySetInnerHTML={{ __html: renderMarkdown(body) }}
       />
+      {retrieval && <EvidencePanel retrieval={retrieval} copy={copy} />}
       <CitationList citations={citations} copy={copy} />
     </div>
   );
@@ -85,10 +104,7 @@ export function MessageList({
   // it is a streaming placeholder. Dropping it up front keeps the grouping and
   // spacing logic below honest about what the previous visible row actually is.
   const visibleMessages = messages.filter(
-    (m) =>
-      m.role !== 'assistant' ||
-      (m.content ?? '').trim().length > 0 ||
-      !!m.tool_calls?.length,
+    (m) => m.role !== 'assistant' || (m.content ?? '').trim().length > 0 || !!m.tool_calls?.length,
   );
   // Must be false on an empty transcript: `undefined !== 'user'` would be true
   // and would hide the avatar on the very first typing indicator.
@@ -157,7 +173,11 @@ export function MessageList({
                   {m.isError ? (
                     <ErrorBubble content={m.content ?? ''} copy={copy} onRetry={onRetry} />
                   ) : hasContent ? (
-                    <MarkdownContent content={m.content as string} copy={copy} />
+                    <MarkdownContent
+                      content={m.content as string}
+                      copy={copy}
+                      retrieval={m.retrieval}
+                    />
                   ) : (
                     <ToolChip kind="calling" label={copy.toolCalling} />
                   )}

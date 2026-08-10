@@ -139,9 +139,7 @@ def test_scenario_capture_failure_returns_structured_error(
     assert "browser not found" in out["error"]
 
 
-def test_url_capture_success_uses_slug(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_url_capture_success_uses_slug(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(h, "SCREENSHOT_DIR", tmp_path)
     captured: dict = {}
     monkeypatch.setattr(h, "_run", _stub_run(captured))
@@ -155,9 +153,7 @@ def test_url_capture_success_uses_slug(
     assert captured["cmd"] == ["just", "screenshot-url", "/blog/my-post", "blog-my-post"]
 
 
-def test_url_cache_hit_skips_playwright(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_url_cache_hit_skips_playwright(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(h, "SCREENSHOT_DIR", tmp_path)
     (tmp_path / "_ondemand").mkdir()
     (tmp_path / "_ondemand" / "tour.png").write_bytes(b"PNG")

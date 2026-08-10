@@ -26,7 +26,7 @@ Whenever a feature request lands, ask: **does this make the user's question answ
    - **Acceptance criteria** per story: `Given … / When … / Then …`. Concrete enough that QA can write an eval case from it.
    - **Out of scope** (explicit list): the most common scope-creep risks, written down so they cannot sneak in.
    - **Open questions for the stakeholder**: numbered, blocking vs non-blocking.
-4. **Sanity-check against existing capabilities**: grep `apps/backend/mcp_servers/` and `prompts/` to confirm the feature is not already partially built. Reference what exists.
+4. **Sanity-check against existing capabilities**: grep `apps/backend/src/mcp_servers/` and `prompts/` to confirm the feature is not already partially built. Reference what exists.
 5. **Propose a slice**: smallest valuable cut that proves the hypothesis. Name what is intentionally deferred.
 
 ## Prioritisation framework

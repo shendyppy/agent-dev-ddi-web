@@ -12,6 +12,7 @@ Two decisions are under test, both silent when wrong:
 
 from __future__ import annotations
 
+import inspect
 import json
 
 import pytest
@@ -30,11 +31,13 @@ from .llm import (
     _FALLBACK_WINDOW_TRANSIENT,
     _enter_fallback,
     _extract_chunks,
+    _FakeChoice,
+    _FakeMessage,
+    _FakeResponse,
     _first_tool_result,
     _last_user_question,
     _render_nothing_relevant,
     _render_retrieved_answer,
-    _select_best_chunks,
     _should_retry,
     fallback_active,
     is_capacity_error,
@@ -190,14 +193,195 @@ class TestFallbackWindow:
         assert llm_module._fallback_deadline is None
 
 
+class TestResolveApiKey:
+    """The four-layer order from ADR 0010. Every layer matters for a different
+    caller: the user key is BYOK, the provider key is what lets a model picker
+    offer more than one vendor at once, the generic key is the two-line .env
+    swap, and None is what keeps every pre-ADR call behaving as it did."""
+
+    MODEL = "gemini/gemini-3.6-flash"
+
+    @pytest.fixture(autouse=True)
+    def _no_ambient_keys(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # litellm's import-time load_dotenv() puts the real .env into
+        # os.environ, so without this the suite would read Shendy's actual key
+        # and the assertions below would depend on his machine.
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.setattr(llm_module.settings, "model_api_key", None)
+
+    def test_user_key_wins_over_everything(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "from-env")
+        monkeypatch.setattr(llm_module.settings, "model_api_key", "generic")
+        assert llm_module.resolve_api_key(self.MODEL, "from-user") == "from-user"
+
+    def test_blank_user_key_is_not_a_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """An empty header must fall through, not authenticate as ''."""
+        monkeypatch.setenv("GEMINI_API_KEY", "from-env")
+        assert llm_module.resolve_api_key(self.MODEL, "   ") == "from-env"
+
+    def test_provider_key_beats_the_generic_one(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("GEMINI_API_KEY", "from-env")
+        monkeypatch.setattr(llm_module.settings, "model_api_key", "generic")
+        assert llm_module.resolve_api_key(self.MODEL) == "from-env"
+
+    def test_provider_name_comes_from_the_model_string(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The whole point of deriving the provider: a different model reads a
+        different variable with no code change."""
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
+        assert llm_module.resolve_api_key("deepseek/deepseek-chat") == "ds-key"
+
+    def test_generic_key_is_the_fallback(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(llm_module.settings, "model_api_key", "generic")
+        assert llm_module.resolve_api_key(self.MODEL) == "generic"
+
+    def test_nothing_configured_resolves_to_none(self) -> None:
+        """Layer 4 — the backwards-compatible path. Returning None is what lets
+        acompletion omit api_key entirely and leave LiteLLM's own lookup alone."""
+        assert llm_module.resolve_api_key(self.MODEL) is None
+
+    def test_unknown_model_still_reaches_the_generic_key(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unrecognised model id is the provider's error to report, not a
+        reason to fail before the request is even attempted."""
+        monkeypatch.setattr(llm_module.settings, "model_api_key", "generic")
+        assert llm_module.resolve_api_key("not-a-real-provider/whatever") == "generic"
+
+
+class TestCredentialNeverLeaks:
+    """ADR 0010 names three leak paths. These cover the one that lives in this
+    module; each asserts on the key's literal value, so they fail loudly rather
+    than drifting if the payload shape changes."""
+
+    SECRET = "sk-must-never-appear-anywhere"
+
+    @pytest.fixture(autouse=True)
+    def _clean_state(self) -> None:
+        reset_fallback()
+
+    async def test_key_reaches_the_provider_but_not_the_trace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        traced: list[dict[str, object]] = []
+        sent: dict[str, object] = {}
+
+        async def _capture(**kwargs: object) -> object:
+            sent.update(kwargs)
+            return _FakeResponse(choices=[_FakeChoice(message=_FakeMessage(content="ok"))])
+
+        class _Recorder:
+            def update_current_generation(self, **kwargs: object) -> None:
+                traced.append(kwargs)
+
+        monkeypatch.setattr(llm_module.litellm, "acompletion", _capture)
+        monkeypatch.setattr(llm_module, "get_client", lambda: _Recorder())
+        monkeypatch.setattr(llm_module.settings, "llm_fake_mode", False)
+
+        await llm_module.acompletion([{"role": "user", "content": "halo"}], api_key=self.SECRET)
+
+        # It must actually be used, or BYOK does nothing.
+        assert sent.get("api_key") == self.SECRET
+        # …and it must not be anywhere Langfuse would persist.
+        assert self.SECRET not in repr(traced)
+
+    def test_observe_decorator_does_not_capture_arguments(self) -> None:
+        """The leak the first version of this class MISSED.
+
+        `@observe` captures the decorated function's arguments by default —
+        `LANGFUSE_OBSERVE_DECORATOR_IO_CAPTURE_ENABLED` defaults to "True" and
+        `_get_input_from_func_args` serialises **kwargs wholesale. `api_key` is
+        a kwarg on `acompletion`, so every BYOK call on a Langfuse-enabled
+        deployment wrote the user's credential into a trace.
+
+        The other test in this class passed throughout, because it mocks
+        `get_client` — the path `update_current_generation` uses. The decorator
+        holds its own client and never went through the mock.
+
+        Asserting on the source is deliberate. The decorator returns an opaque
+        wrapper, so the configuration cannot be read back at runtime; this is
+        the only way to make the security control fail loudly if it is removed.
+        """
+        source = inspect.getsource(llm_module)
+        decorator = next(
+            line for line in source.splitlines() if line.strip().startswith("@observe(")
+        )
+        assert "capture_input=False" in decorator, decorator
+        assert "capture_output=False" in decorator, decorator
+
+    async def test_no_api_key_is_passed_when_none_resolves(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Omitted, not None. Passing api_key=None explicitly short circuits
+        LiteLLM's own env lookup on some providers, which would silently break
+        every deployment that relies on it today."""
+        sent: dict[str, object] = {}
+
+        async def _capture(**kwargs: object) -> object:
+            sent.update(kwargs)
+            return _FakeResponse(choices=[_FakeChoice(message=_FakeMessage(content="ok"))])
+
+        monkeypatch.setattr(llm_module.litellm, "acompletion", _capture)
+        monkeypatch.setattr(llm_module.settings, "llm_fake_mode", False)
+        monkeypatch.setattr(llm_module, "resolve_api_key", lambda *_a, **_k: None)
+
+        await llm_module.acompletion([{"role": "user", "content": "halo"}])
+        assert "api_key" not in sent
+
+
+class TestPerRequestOffline:
+    """`offline=True` skips the provider for ONE call. It must not touch the
+    process-wide flag, or the UI toggle it backs would degrade every other
+    user's answers too."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        reset_fallback()
+        monkeypatch.setattr(llm_module.settings, "llm_fake_mode", False)
+
+    async def test_offline_call_never_reaches_the_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        async def _boom(**_kwargs: object) -> object:
+            raise AssertionError("provider was called despite offline=True")
+
+        monkeypatch.setattr(llm_module.litellm, "acompletion", _boom)
+        response = await llm_module.acompletion(
+            [{"role": "user", "content": "cara indexing?"}], offline=True
+        )
+        assert response.choices[0].message.tool_calls is not None
+
+    async def test_one_offline_call_does_not_affect_the_next(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The isolation that makes a per-user toggle safe."""
+        calls = {"n": 0}
+
+        async def _ok(**_kwargs: object) -> object:
+            calls["n"] += 1
+            return _FakeResponse(choices=[_FakeChoice(message=_FakeMessage(content="real"))])
+
+        monkeypatch.setattr(llm_module.litellm, "acompletion", _ok)
+        await llm_module.acompletion([{"role": "user", "content": "x"}], offline=True)
+        assert calls["n"] == 0
+
+        await llm_module.acompletion([{"role": "user", "content": "x"}])
+        assert calls["n"] == 1
+        assert llm_module.settings.llm_fake_mode is False
+
+
 class TestAcompletionDegradesInsteadOfFailing:
     """End to end through the gateway: what the caller gets back when the
     provider says no. This is the behaviour the FE used to render as a red
     error bubble."""
 
     @pytest.fixture(autouse=True)
-    def _clean_state(self) -> None:
+    def _clean_state(self, monkeypatch: pytest.MonkeyPatch) -> None:
         reset_fallback()
+        # CI exports LLM_FAKE_MODE=true for the eval suite, which would make
+        # acompletion skip the provider before the failure under test happens.
+        monkeypatch.setattr(llm_module.settings, "llm_fake_mode", False)
 
     async def _acompletion_raising(
         self, monkeypatch: pytest.MonkeyPatch, exc: BaseException
@@ -346,6 +530,18 @@ class TestFakeAnswerHelpers:
         answer = _render_retrieved_answer("q", SEARCH_OUTPUT["chunks"], "index is stale")
         assert "index is stale" in answer
 
+    def test_pipeline_internals_stay_out_of_the_prose(self) -> None:
+        """Scores and inline paths are operator vocabulary, not an answer. The
+        similarity score is doubly wrong to print: the embedding model is
+        English and the corpus Indonesian, so the number cannot separate
+        on-topic from off-topic. Paths belong only in the Sources block, where
+        the FE turns them into citation chips."""
+        answer = _render_retrieved_answer("q", SEARCH_OUTPUT["chunks"], None)
+        assert "relevansi" not in answer
+        assert "0.81" not in answer  # the chunk's score
+        # The path appears exactly once: in the Sources block, not under the heading.
+        assert answer.count("docs/guides/indexing.md") == 1
+
     def test_long_chunks_are_excerpted(self) -> None:
         """A chunk can be thousands of characters; the transcript is the thing
         under test, not the corpus."""
@@ -355,6 +551,89 @@ class TestFakeAnswerHelpers:
         # 700-char excerpt + the offline note + one citation, nothing more.
         assert len(answer) < 1400
 
+    def test_excerpt_never_cuts_a_table_mid_row(self) -> None:
+        """Chunks are markdown, and a GFM table chopped mid-row stops parsing
+        as a table — the FE then shows raw pipe characters. The cut must land
+        on a line boundary so a long table just loses rows."""
+        rows = "\n".join(f"| Modul {i} | `/route-{i}` | `/add` | `/edit/:id` |" for i in range(40))
+        table = "| Modul | Route | Add | Edit |\n|---|---|---|---|\n" + rows
+        chunks = [{"text": table, "source": "a.md", "score": 0.5, "metadata": {}}]
+        answer = _render_retrieved_answer("q", chunks, None)
+        excerpt = answer.split("Sources:")[0]
+        for line in excerpt.splitlines():
+            if line.startswith("|"):
+                assert line.endswith("|"), f"partial table row leaked: {line!r}"
+
+    def test_cut_inside_code_fence_is_closed(self) -> None:
+        """The TEP CMS golden-path bug: the doc wraps its step list in a ```
+        fence, the excerpt cut landed before the closing ```, and every later
+        section — our own headings and tables included — rendered inside one
+        giant code block. A cut excerpt must never leave a fence open."""
+        # Blank line INSIDE the fence, like the real doc's step groups — that
+        # is what makes the paragraph-boundary cut land mid-fence.
+        steps_head = "\n".join(f"{i}. Langkah {i}         → Modul {i}" for i in range(1, 8))
+        steps_tail = "\n".join(f"{i}. Langkah {i}         → Modul {i}" for i in range(8, 30))
+        fenced = (
+            "Ini urutan yang membuat semua fitur nyambung.\n\n```\n"
+            + steps_head
+            + "\n\n"
+            + steps_tail
+            + "\n```\n\nParagraf penutup."
+        )
+        chunks = [
+            {"text": fenced, "source": "a.md", "score": 0.8, "metadata": {}},
+            {
+                "text": "| A | B |\n|---|---|\n| 1 | 2 |",
+                "source": "b.md",
+                "score": 0.7,
+                "metadata": {"heading_path": "Bagian Kedua"},
+            },
+        ]
+        answer = _render_retrieved_answer("q", chunks, None)
+        assert answer.count("```") % 2 == 0
+        # The next section's heading must sit OUTSIDE the fence — i.e. the
+        # fence closes before it, not after.
+        assert answer.index("```", answer.index("```") + 3) < answer.index("### 2. Bagian Kedua")
+
+    def test_chunk_arriving_with_unclosed_fence_is_closed(self) -> None:
+        """The indexer splits documents on headings, so a chunk can END inside
+        a fence it opened — unbalanced before we ever cut it."""
+        chunks = [
+            {"text": "Contoh:\n\n```\npnpm dev", "source": "a.md", "score": 0.8, "metadata": {}}
+        ]
+        answer = _render_retrieved_answer("q", chunks, None)
+        assert answer.count("```") % 2 == 0
+
+    def test_crlf_line_endings_are_normalized(self) -> None:
+        """The corpus is indexed on Windows, so chunk text can arrive with
+        \\r\\n. Those must never reach the FE: marked drops a CRLF table to
+        raw per-row paragraphs, and _excerpt's paragraph-boundary search
+        ("\\n\\n") never matches, so cuts degrade to word boundaries."""
+        table = "| A | B |\r\n|---|---|\r\n" + "\r\n".join(
+            f"| baris {i} | nilai {i} |" for i in range(60)
+        )
+        chunks = [{"text": table, "source": "a.md", "score": 0.5, "metadata": {}}]
+        answer = _render_retrieved_answer("q", chunks, None)
+        assert "\r" not in answer
+        for line in answer.split("Sources:")[0].splitlines():
+            if line.startswith("|"):
+                assert line.endswith("|"), f"partial table row leaked: {line!r}"
+
+    def test_chunk_leading_heading_is_not_duplicated(self) -> None:
+        """The chunk's first line is the same title we already print from
+        heading_path; keeping it rendered every section title twice."""
+        chunks = [
+            {
+                "text": "## Cara Membaca Dokumen Ini\n\nIsi bagian ini.",
+                "source": "a.md",
+                "score": 0.5,
+                "metadata": {"heading_path": "TEP CMS > Cara Membaca Dokumen Ini"},
+            }
+        ]
+        answer = _render_retrieved_answer("q", chunks, None)
+        assert answer.count("Cara Membaca Dokumen Ini") == 1
+        assert "Isi bagian ini." in answer
+
     def test_nothing_relevant_is_an_honest_dead_end(self) -> None:
         """No chunks cleared the floor: say so and suggest a next step, rather
         than quoting whatever came back."""
@@ -363,175 +642,3 @@ class TestFakeAnswerHelpers:
         assert "cara deploy" in answer
         assert "index is empty" in answer
         assert "Sources:" not in answer
-
-
-def _chunk(
-    score: float | None,
-    source: str = "a.md",
-    text: str = "isi dokumen",
-    heading: str = "",
-) -> dict[str, object]:
-    chunk: dict[str, object] = {
-        "text": text,
-        "source": source,
-        "metadata": {"heading_path": heading} if heading else {},
-    }
-    if score is not None:
-        chunk["score"] = score
-    return chunk
-
-
-class TestSelectBestChunks:
-    """`search_documentation` returns a fixed top_k regardless of quality, so
-    the tail of its list is usually a chunk that merely shares a word with the
-    question. Printing it all buries the passage that actually answers."""
-
-    def test_keeps_the_best_match_and_its_near_ties(self) -> None:
-        selected = _select_best_chunks([_chunk(0.82, "a.md"), _chunk(0.78, "b.md")])
-        assert [c["source"] for c in selected] == ["a.md", "b.md"]
-
-    def test_drops_matches_clearly_worse_than_the_best(self) -> None:
-        selected = _select_best_chunks(
-            [_chunk(0.82, "a.md"), _chunk(0.45, "b.md"), _chunk(0.31, "c.md")]
-        )
-        assert [c["source"] for c in selected] == ["a.md"]
-
-    def test_orders_by_score_regardless_of_input_order(self) -> None:
-        selected = _select_best_chunks([_chunk(0.75, "b.md"), _chunk(0.80, "a.md")])
-        assert [c["source"] for c in selected] == ["a.md", "b.md"]
-
-    def test_caps_the_number_of_passages(self) -> None:
-        selected = _select_best_chunks([_chunk(0.80, f"{i}.md") for i in range(6)])
-        assert len(selected) == 3
-
-    def test_nothing_relevant_when_even_the_best_is_weak(self) -> None:
-        """A wall of near-misses is worse than admitting the index has nothing:
-        it looks authoritative and answers a different question."""
-        assert _select_best_chunks([_chunk(0.12), _chunk(0.05), _chunk(-0.3)]) == []
-
-    def test_unscored_chunks_fall_back_to_retriever_order(self) -> None:
-        """A retriever that does not score at all must not be read as empty."""
-        chunks = [_chunk(None, f"{i}.md") for i in range(5)]
-        selected = _select_best_chunks(chunks)
-        assert [c["source"] for c in selected] == ["0.md", "1.md", "2.md"]
-
-    def test_empty_input_stays_empty(self) -> None:
-        assert _select_best_chunks([]) == []
-
-
-class TestKeywordGate:
-    """Measured against the real index, the similarity score cannot tell an
-    off-topic Indonesian question ("resep rendang padang", top score 0.514) from
-    an on-topic one ("gimana cara menjalankan proyek ini di lokal?", 0.501) —
-    bge-small-en reads all Indonesian text as roughly equidistant. Keyword
-    overlap separated the same queries cleanly (on topic 3-10, off topic 0-1),
-    so overlap gates and the score only breaks ties."""
-
-    QUESTION = "gimana cara menjalankan proyek ini di lokal?"
-
-    def test_how_to_framing_does_not_make_a_passage_relevant(self) -> None:
-        """`cara` is in most headings of this corpus ("Cara Menjalankan", "Cara
-        Membaca", "Cara Kerja"), so it cannot be allowed to count: a contents
-        page whose only tie to the question is the word "cara" is eliminated
-        outright, not merely ranked second."""
-        toc = _chunk(0.50, "toc.md", heading="Cara Membaca Dokumen Ini", text="daftar isi")
-        answer = _chunk(
-            0.49,
-            "run.md",
-            heading="Tech Stack > Menjalankan di lokal",
-            text="npm i lalu npm run dev untuk proyek ini",
-        )
-        selected = _select_best_chunks([toc, answer], self.QUESTION)
-        assert [c["source"] for c in selected] == ["run.md"]
-
-    def test_off_topic_how_to_questions_are_rejected(self) -> None:
-        """The regression this stopword group exists for: "gimana cara bikin kopi
-        susu" used to come back with a documentation contents page."""
-        toc = _chunk(
-            0.49, "toc.md", heading="TEP CMS > Cara Membaca Dokumen Ini", text="cara bikin"
-        )
-        assert _select_best_chunks([toc], "gimana cara bikin kopi susu yang enak") == []
-
-    def test_short_product_acronyms_still_count(self) -> None:
-        """A four-character floor threw away `tep` and `cms` — the two words that
-        identify the product — and answered "nothing found" to a question the
-        index had a 0.662 match for."""
-        chunk = _chunk(
-            0.66,
-            "tep.md",
-            heading="TEP CMS — Feature Context > Tech Stack",
-            text="React, Vite, Tailwind",
-        )
-        selected = _select_best_chunks([chunk], "teknologi apa yang dipakai di TEP CMS?")
-        assert [c["source"] for c in selected] == ["tep.md"]
-
-    def test_a_short_word_does_not_match_mid_token(self) -> None:
-        """Prefix-of-token, not substring-of-text: as a bare substring `tep`
-        would hit "step" and `api` would hit "aplikasi"."""
-        decoy = _chunk(0.60, "decoy.md", heading="Langkah Setup", text="step by step aplikasi ini")
-        assert _select_best_chunks([decoy], "TEP API") == []
-
-    def test_a_titled_section_beats_a_table_of_contents(self) -> None:
-        """The exact shape observed against the real index: a contents table
-        mentions every topic in its cells, so on body text alone it ties with
-        the section that answers. The heading is what breaks it."""
-        toc = _chunk(
-            0.50,
-            "toc.md",
-            heading="TEP CMS > Cara Membaca Dokumen Ini",
-            text="| Cara jalanin di lokal | Tech Stack & Cara Menjalankan |",
-        )
-        answer = _chunk(
-            0.49,
-            "run.md",
-            heading="TEP CMS > Cara Menjalankan > Menjalankan di lokal",
-            text="npm i lalu npm run dev",
-        )
-        selected = _select_best_chunks([toc, answer], self.QUESTION)
-        assert [c["source"] for c in selected] == ["run.md", "toc.md"]
-
-    def test_a_high_score_does_not_survive_zero_overlap(self) -> None:
-        """The consequence of trusting overlap over the score: a chunk that
-        mentions nothing the user asked about is dropped even at 0.82, because on
-        this corpus a high score is not evidence of being on topic."""
-        mute = _chunk(0.82, "mute.md", text="tidak menyebut kata apa pun")
-        on_topic = _chunk(0.40, "on-topic.md", heading="Menjalankan di lokal", text="npm run dev")
-        selected = _select_best_chunks([mute, on_topic], self.QUESTION)
-        assert [c["source"] for c in selected] == ["on-topic.md"]
-
-    def test_score_breaks_ties_between_equally_on_topic_passages(self) -> None:
-        weaker = _chunk(0.45, "weaker.md", heading="Menjalankan di lokal", text="npm run dev")
-        stronger = _chunk(0.61, "stronger.md", heading="Menjalankan di lokal", text="npm run dev")
-        selected = _select_best_chunks([weaker, stronger], self.QUESTION)
-        assert [c["source"] for c in selected] == ["stronger.md", "weaker.md"]
-
-    def test_nothing_on_topic_returns_nothing(self) -> None:
-        """The off-topic case that a score floor could not catch: decent scores,
-        no shared vocabulary at all."""
-        chunks = [
-            _chunk(0.52, "a.md", heading="Manajemen Assessment", text="modul penilaian peserta"),
-            _chunk(0.51, "b.md", heading="Peta Route", text="daftar halaman aplikasi"),
-        ]
-        assert _select_best_chunks(chunks, "resep rendang padang untuk lebaran") == []
-
-    def test_a_question_with_no_content_words_falls_back_to_score(self) -> None:
-        """Nothing to overlap against, so refusing to answer would be worse than
-        a weak guess ranked by score."""
-        selected = _select_best_chunks([_chunk(0.75, "b.md"), _chunk(0.80, "a.md")], "apa itu ini?")
-        assert [c["source"] for c in selected] == ["a.md", "b.md"]
-
-    def test_a_single_word_question_cannot_be_held_to_the_two_point_bar(self) -> None:
-        """One content word found in the body scores 1, so a bar of 2 would
-        reject every passage for a one-word question."""
-        selected = _select_best_chunks(
-            [_chunk(0.55, "a.md", text="modul assessment untuk peserta")], "assessment"
-        )
-        assert [c["source"] for c in selected] == ["a.md"]
-
-    def test_grammar_words_do_not_count_as_topic(self) -> None:
-        """Without a stopword guard, "ini"/"yang" would hand the tie to whichever
-        chunk happens to be the most verbose."""
-        chatty = _chunk(0.50, "chatty.md", text="ini yang itu dengan untuk dari pada proyek ini")
-        precise = _chunk(0.50, "precise.md", heading="Menjalankan di lokal", text="npm run dev")
-        selected = _select_best_chunks([chatty, precise], self.QUESTION)
-        assert selected[0]["source"] == "precise.md"

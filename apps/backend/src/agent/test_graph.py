@@ -8,7 +8,11 @@ do need a model: whether the *answer* respects the scope and stops searching.
 
 from __future__ import annotations
 
+import json
+from typing import ClassVar
+
 import pytest
+from langgraph.graph.message import add_messages
 
 from . import graph as graph_mod
 from .graph import _drop_unanswered_tool_calls, _route_after_llm, call_tools
@@ -16,8 +20,6 @@ from .settings import settings
 
 
 def _assistant_search_call(call_id: str = "c1", **args) -> dict:
-    import json
-
     return {
         "role": "assistant",
         "content": "",
@@ -68,7 +70,9 @@ async def test_scope_is_injected_when_model_omits_it(captured_calls):
 async def test_scope_overrides_a_different_product_chosen_by_the_model(captured_calls):
     """The model asking for another product does not widen the scope."""
     state = {
-        "messages": [_assistant_search_call(query="video call", product_id="dash-participant-saas")],
+        "messages": [
+            _assistant_search_call(query="video call", product_id="dash-participant-saas")
+        ],
         "product_id": "tep-cms",
         "tool_rounds": 0,
     }
@@ -121,6 +125,42 @@ async def test_tool_rounds_increment(captured_calls):
     }
     result = await call_tools(state)
     assert result["tool_rounds"] == 3
+
+
+# ─── History reflects what was dispatched ────────────────────────────────
+# The injected scope used to exist only inside call_tools: the transcript kept
+# the model's original arguments, so the model read its ignored product_id back
+# and nothing outside the function could observe the ADR 0009 guarantee.
+
+
+@pytest.mark.asyncio
+async def test_history_is_corrected_to_the_dispatched_arguments(captured_calls):
+    """add_messages replaces by id, so the assistant turn is rewritten in place."""
+    request = add_messages([], [_assistant_search_call(query="video call")])[0]
+    state = {"messages": [request], "product_id": "tep-cms", "tool_rounds": 0}
+
+    result = await call_tools(state)
+
+    corrected = next(m for m in result["messages"] if m["role"] == "assistant")
+    assert corrected["id"] == request.id
+    recorded = json.loads(corrected["tool_calls"][0]["function"]["arguments"])
+    assert recorded["product_id"] == "tep-cms"
+    assert recorded["query"] == "video call"
+
+    merged = add_messages([request], result["messages"])
+    assert len(merged) == 2, "correction must replace the turn, not duplicate it"
+    assert merged[0].tool_calls[0]["args"]["product_id"] == "tep-cms"
+
+
+@pytest.mark.asyncio
+async def test_history_is_left_alone_when_nothing_was_rewritten(captured_calls):
+    """No scope, no rewrite — the turn must not be re-emitted for no reason."""
+    request = add_messages([], [_assistant_search_call(query="compare", product_id="klob")])[0]
+    state = {"messages": [request], "product_id": None, "tool_rounds": 0}
+
+    result = await call_tools(state)
+
+    assert all(m["role"] == "tool" for m in result["messages"])
 
 
 # ─── Loop guard ──────────────────────────────────────────────────────────
@@ -212,13 +252,15 @@ async def test_final_answer_withholds_tools_and_appends_the_nudge(monkeypatch):
                 return {"role": "assistant", "content": "done"}
 
         class _Resp:
-            choices = [type("C", (), {"message": _Msg()})()]
+            choices: ClassVar = [type("C", (), {"message": _Msg()})()]
 
         return _Resp()
 
     monkeypatch.setattr(graph_mod.llm, "acompletion", fake_acompletion)
     monkeypatch.setattr(
-        graph_mod.mcp_clients, "discover_all_tools", lambda: (_ for _ in ()).throw(
+        graph_mod.mcp_clients,
+        "discover_all_tools",
+        lambda: (_ for _ in ()).throw(
             AssertionError("final_answer must not fetch the tool catalogue")
         ),
     )

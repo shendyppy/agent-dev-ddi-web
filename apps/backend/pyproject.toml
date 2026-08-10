@@ -57,7 +57,20 @@ target-version = "py311"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "N", "RUF"]
+select = ["E", "F", "I", "B", "UP", "N", "RUF", "BLE"]
+# BLE (blind-except) is selected so the `# noqa: BLE001` directives already
+# scattered through server.py / graph.py / mcp_clients.py mean something. Each
+# of those catches is deliberate — a failing MCP server or a bad tool reply must
+# degrade, not 500 — and the noqa is where that reasoning is written down.
+# Without BLE enabled the directives were dead weight and RUF100 flagged them,
+# which would have deleted the rationale along with the pragma.
+ignore = [
+    # The prose in this codebase uses real typography (en dashes, ×, box-drawing
+    # rules in section headers). Flagging those as "ambiguous" fights the house
+    # style for no safety gain — the rules exist to catch homoglyphs in
+    # identifiers, and RUF001 still covers that.
+    "RUF003",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["src", "tests"]

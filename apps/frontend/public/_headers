@@ -1,0 +1,49 @@
+# ┌──────────────────────────────────────────────────────────────────────────┐
+# │ BEFORE DEPLOYING: replace every REPLACE-WITH-BACKEND-ORIGIN below.        │
+# │ If you do not, `connect-src` will not match the real API origin and the   │
+# │ browser will block EVERY /api/* call — the app loads and then answers     │
+# │ nothing. That failure is deliberate: a placeholder that breaks loudly is  │
+# │ safer than a permissive connect-src nobody ever notices is wrong.         │
+# └──────────────────────────────────────────────────────────────────────────┘
+#
+# Security headers, served by Cloudflare Pages (it reads this file from the
+# build output root — verified: `just build-fe` copies public/_headers to
+# dist/_headers). Netlify uses the same format. Nothing here applies to
+# `astro dev` — the dev server does not read it — so a local run is unaffected,
+# which also means a mistake in this file cannot be caught locally.
+#
+# WHY THIS FILE EXISTS
+# Since ADR 0010 the browser holds a provider API key in localStorage. That
+# makes any XSS on this page a credential-theft bug rather than a defacement,
+# so the page needs a second line of defence behind DOMPurify. CSP is that line:
+# even if markup slips past sanitisation, the script cannot execute and cannot
+# post the key anywhere.
+
+/*
+  # No plugins, no framing, no MIME sniffing.
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin
+  # This app needs none of these. Denying them shrinks what a successful XSS
+  # could reach for.
+  Permissions-Policy: geolocation=(), camera=(), microphone=(self), payment=(), usb=()
+
+  # ── CSP ──
+  # script-src has NO 'unsafe-inline': that is the clause doing the real work,
+  # and it is why Astro's islands are fine — they ship as external modules, not
+  # inline <script> blocks.
+  #
+  # style-src DOES allow 'unsafe-inline', knowingly. Preact writes inline
+  # style="" attributes (the evidence panel's similarity bar is one), and there
+  # is no nonce mechanism available on a static host. Inline CSS cannot exfiltrate
+  # a localStorage value, so the residual risk is defacement, not theft.
+  #
+  # connect-src must list the backend origin. 'self' alone would block every
+  # /api/* call, because the API is served from a different origin than the
+  # static site — update the placeholder below to the real backend URL at deploy
+  # time, and keep it as tight as possible: this is the directive that decides
+  # where a compromised page is allowed to send the user's key.
+  #
+  # img-src includes data: for inlined icons, and the backend origin because the
+  # capture_screenshot skill returns absolute image URLs served by FastAPI.
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://REPLACE-WITH-BACKEND-ORIGIN; font-src 'self'; connect-src 'self' https://REPLACE-WITH-BACKEND-ORIGIN https://*.supabase.co; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'

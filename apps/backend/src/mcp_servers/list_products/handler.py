@@ -17,10 +17,15 @@ from chromadb import PersistentClient
 from pydantic import BaseModel
 
 # Mirror search_docs/handler.py — MCP servers must not import agent modules,
-# so we read the same env var with the same default.
-CHROMA_PERSIST_DIR = Path(
-    os.environ.get("CHROMA_PERSIST_DIR", str(Path.cwd() / ".data" / "chroma"))
-)
+# so we read the same env var and resolve it the same way.
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+CHROMA_PERSIST_DIR = Path(os.environ.get("CHROMA_PERSIST_DIR", ".data/chroma"))
+if not CHROMA_PERSIST_DIR.is_absolute():
+    # Anchored to the repo root, never the cwd. These servers are spawned as
+    # subprocesses and inherit the orchestrator's working directory, so a
+    # cwd-relative path made the index location depend on where the caller
+    # happened to start — see agent.settings.resolve_from_repo_root.
+    CHROMA_PERSIST_DIR = (_REPO_ROOT / CHROMA_PERSIST_DIR).resolve()
 COLLECTION_NAME = "docs"
 
 
@@ -43,7 +48,7 @@ def _collect_products() -> list[Product]:
     client = PersistentClient(path=str(CHROMA_PERSIST_DIR))
     try:
         collection = client.get_collection(name=COLLECTION_NAME)
-    except Exception:
+    except Exception:  # noqa: BLE001 — Chroma raises a bare Exception here
         # No collection yet → behave like "no products" rather than erroring.
         return []
 

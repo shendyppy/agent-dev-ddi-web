@@ -10,6 +10,10 @@
  * plain.
  */
 
+// Type-only, so this pairs with chat.ts's `import type { Copy }` without
+// creating a runtime cycle — both imports are erased at compile time.
+import type { Confidence, Verdict } from './chat';
+
 export type Language = 'id' | 'en';
 
 export type Copy = {
@@ -64,6 +68,47 @@ export type Copy = {
   scopeChangeAria: string;
   composerLockedPlaceholder: string;
   citationSources: string;
+  // Evidence panel — shows which retrieved passages backed the answer, with
+  // both the similarity score and the keyword overlap. Rejected passages are
+  // listed too: on this corpus a high score is not evidence of being on topic,
+  // and seeing one thrown out is what explains the ranking.
+  evidenceLabel: string;
+  evidenceAria: string;
+  evidenceConfidence: (level: Confidence) => string;
+  evidenceUsed: (used: number, total: number) => string;
+  evidenceMatches: (n: number) => string;
+  evidenceScore: string;
+  evidenceVerdict: (verdict: Verdict) => string;
+  evidenceScopeNote: (productId: string) => string;
+  // Shown when nothing cleared the bar, so the reader knows the answer was not
+  // built from the passages listed below it.
+  evidenceNoneNote: string;
+  // Model picker + BYOK. Voice note: the key is the user's own property and we
+  // do not keep it, so say that plainly rather than burying it in fine print.
+  modelPickerLabel: string;
+  modelPickerAria: string;
+  modelKeyLabel: string;
+  modelKeyPlaceholder: string;
+  modelKeyHelp: string;
+  modelKeySaved: string;
+  modelKeyClear: string;
+  modelUnavailable: (envKey: string) => string;
+  modelNeedsKey: string;
+  // Shown on an entry the server has no key for but the user does. Says whose
+  // key pays for it, so a wrong-provider key produces an error they can explain.
+  modelUsesYourKey: string;
+  modelSearchPlaceholder: string;
+  modelNoMatch: string;
+  modelMoreAvailable: (n: number) => string;
+  modelLoadFailed: string;
+  modelNoneCredentialed: string;
+  modelListEmpty: string;
+  // Offline mode — answer from the local index without calling the provider.
+  // Per request, so one person's toggle does not affect anyone else.
+  offlineModeLabel: string;
+  offlineModeHelp: string;
+  offlineModeBadge: string;
+  offlineModeLocks: string;
   // Voice input (Web Speech API). The button only renders when the browser
   // supports it, so there is no "unsupported" string to show.
   voiceLabel: string;
@@ -132,6 +177,48 @@ export const COPY: Record<Language, Copy> = {
     scopeChangeAria: 'Ganti fokus produk',
     composerLockedPlaceholder: 'Pilih fokus produk dulu di atas',
     citationSources: 'Sumber',
+    evidenceLabel: 'Dasar jawaban',
+    evidenceAria: 'Lihat bagian dokumentasi yang jadi dasar jawaban ini',
+    evidenceConfidence: (level) =>
+      ({
+        high: 'Cocok banget',
+        medium: 'Cukup cocok',
+        low: 'Cocoknya tipis',
+        none: 'Nggak ada yang cocok',
+      })[level],
+    evidenceUsed: (used, total) => `${used} dari ${total} bagian dipakai`,
+    evidenceMatches: (n) => (n === 0 ? 'nggak ada kata yang sama' : `${n} kata sama`),
+    evidenceScore: 'kemiripan',
+    evidenceVerdict: (verdict) =>
+      ({ strong: 'Dipakai', weak: 'Cadangan', rejected: 'Dilewati' })[verdict],
+    evidenceScopeNote: (productId) => `Dicari cuma di dokumentasi ${productId}.`,
+    evidenceNoneNote:
+      'Nggak ada bagian yang cukup nyambung sama pertanyaannya, jadi jawaban di atas nggak diambil dari dokumentasi. Angka kemiripan bisa keliatan tinggi tapi nggak berarti nyambung.',
+    modelPickerLabel: 'Model',
+    modelPickerAria: 'Pilih model yang dipakai buat menjawab',
+    modelKeyLabel: 'API key kamu',
+    modelKeyPlaceholder: 'Tempel API key di sini',
+    modelKeyHelp:
+      'Key-nya cuma disimpan di browser kamu dan dikirim langsung ke penyedia model. Kami nggak menyimpannya di server.',
+    modelKeySaved: 'Key tersimpan di browser ini',
+    modelKeyClear: 'Hapus key',
+    // Points down at the key field instead of reading like a refusal — nothing
+    // is blocked, the user just needs a credential for this provider.
+    modelUnavailable: (envKey) => `Perlu ${envKey} — tempel key kamu di bawah`,
+    modelNeedsKey: 'Tempel API key dulu buat pakai model ini',
+    modelUsesYourKey: 'Pakai API key kamu — pastikan key-nya buat penyedia ini',
+    modelSearchPlaceholder: 'Cari model…',
+    modelNoMatch: 'Nggak ada model yang cocok',
+    modelMoreAvailable: (n) => `+${n} model lain, ketik buat nyari`,
+    modelLoadFailed: 'Daftar modelnya belum bisa diambil. Servernya mungkin masih nyala.',
+    modelNoneCredentialed:
+      'Belum ada model yang bisa dipakai dari server ini. Tempel API key kamu di bawah buat mulai.',
+    modelListEmpty: 'Daftar modelnya belum kebaca.',
+    offlineModeLabel: 'Mode offline',
+    offlineModeHelp:
+      'Jawaban dikutip langsung dari dokumentasi lokal, tanpa manggil model. Nggak makan kuota, dan cuma berlaku buat kamu.',
+    offlineModeBadge: 'offline',
+    offlineModeLocks: 'Selama mode offline nyala, model dan API key nggak kepakai.',
     voiceLabel: 'Tanya pakai suara',
     voiceStopLabel: 'Berhenti merekam',
     loginWithGoogle: 'Masuk dengan Google',
@@ -196,13 +283,54 @@ export const COPY: Record<Language, Copy> = {
     scopeChangeAria: 'Change product focus',
     composerLockedPlaceholder: 'Pick a product focus above first',
     citationSources: 'Sources',
+    evidenceLabel: 'What this is based on',
+    evidenceAria: 'See the documentation passages behind this answer',
+    evidenceConfidence: (level) =>
+      ({
+        high: 'Strong match',
+        medium: 'Decent match',
+        low: 'Thin match',
+        none: 'No real match',
+      })[level],
+    evidenceUsed: (used, total) => `${used} of ${total} passages used`,
+    evidenceMatches: (n) => (n === 0 ? 'no shared words' : `${n} shared word${n === 1 ? '' : 's'}`),
+    evidenceScore: 'similarity',
+    evidenceVerdict: (verdict) =>
+      ({ strong: 'Used', weak: 'Backup', rejected: 'Skipped' })[verdict],
+    evidenceScopeNote: (productId) => `Searched only ${productId}'s documentation.`,
+    evidenceNoneNote:
+      'Nothing came close enough to the question, so the answer above was not built from the docs. A high similarity number does not mean a passage is on topic.',
+    modelPickerLabel: 'Model',
+    modelPickerAria: 'Choose the model used to answer',
+    modelKeyLabel: 'Your API key',
+    modelKeyPlaceholder: 'Paste your API key',
+    modelKeyHelp:
+      'Kept in your browser only and sent straight to the model provider. We do not store it on our servers.',
+    modelKeySaved: 'Key saved in this browser',
+    modelKeyClear: 'Remove key',
+    modelUnavailable: (envKey) => `Needs ${envKey} — paste your key below`,
+    modelNeedsKey: 'Paste an API key to use this model',
+    modelUsesYourKey: 'Uses your API key — make sure it is for this provider',
+    modelSearchPlaceholder: 'Search models…',
+    modelNoMatch: 'No models match',
+    modelMoreAvailable: (n) => `+${n} more, type to search`,
+    modelLoadFailed: "Couldn't load the model list. The server may still be starting up.",
+    modelNoneCredentialed:
+      'No models are usable from this server yet. Paste your API key below to get started.',
+    modelListEmpty: 'The model list has not loaded.',
+    offlineModeLabel: 'Offline mode',
+    offlineModeHelp:
+      'Answers are quoted straight from the local docs, with no model call. Costs no quota, and applies only to you.',
+    offlineModeBadge: 'offline',
+    offlineModeLocks: 'While offline mode is on, the model and API key are not used.',
     voiceLabel: 'Ask by voice',
     voiceStopLabel: 'Stop recording',
     loginWithGoogle: 'Sign in with Google',
     logoutLabel: 'Sign out',
     logoutAria: 'Sign out of your account',
     logoutConfirmTitle: 'Sign out?',
-    logoutConfirmBody: 'Your conversation history is saved and will be accessible once you sign back in.',
+    logoutConfirmBody:
+      'Your conversation history is saved and will be accessible once you sign back in.',
     logoutConfirmYes: 'Yes, sign out',
     logoutConfirmCancel: 'Cancel',
     historyLabel: 'History',

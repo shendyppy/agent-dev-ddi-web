@@ -12,7 +12,7 @@ The agent needs a growing set of capabilities ("skills" / "tools"): RAG search, 
 
 ## Decision
 
-All skills are implemented as **MCP servers** — one folder per skill under `apps/backend/mcp_servers/<name>/`. The FastAPI orchestrator connects via an MCP client.
+All skills are implemented as **MCP servers** — one folder per skill under `apps/backend/src/mcp_servers/<name>/`. The FastAPI orchestrator connects via an MCP client.
 
 ## Why
 
@@ -31,7 +31,7 @@ The portability + boundary discipline outweigh the one-time onboarding cost. We 
 ## Structure of an MCP server in this repo
 
 ```
-apps/backend/mcp_servers/<skill_name>/
+apps/backend/src/mcp_servers/<skill_name>/
 ├── skill.md           ← human-readable spec — also parsed to generate MCP tool description
 ├── server.py          ← MCP server entrypoint (uses `mcp` Python SDK)
 ├── handler.py         ← actual implementation (pure functions, easy to unit-test)

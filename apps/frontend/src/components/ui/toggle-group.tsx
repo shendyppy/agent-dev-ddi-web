@@ -34,11 +34,27 @@ type ToggleSize = VariantProps<typeof toggleVariants>['size'];
 
 const ToggleGroupContext = React.createContext<{ size: ToggleSize }>({ size: 'default' });
 
+// Radix types Root's props as a discriminated union keyed on `type`
+// (ToggleGroupSingleProps | ToggleGroupMultipleProps). Once this wrapper
+// rest-destructures className/size/children, the remaining object is no longer
+// provably one arm of that union, so passing it back — together with a ref —
+// fails to type-check even though every caller supplies a literal `type`.
+// Flattening the discriminant for the internal hand-off keeps every other prop
+// checked; the real union is still enforced on ToggleGroup's own props below,
+// which is the boundary callers actually touch.
+const ToggleGroupRoot = ToggleGroupPrimitive.Root as React.ComponentType<
+  Omit<React.ComponentPropsWithoutRef<typeof ToggleGroupPrimitive.Root>, 'type'> & {
+    type?: 'single' | 'multiple';
+    ref?: React.Ref<HTMLDivElement>;
+  }
+>;
+
 const ToggleGroup = React.forwardRef<
   React.ElementRef<typeof ToggleGroupPrimitive.Root>,
-  React.ComponentPropsWithoutRef<typeof ToggleGroupPrimitive.Root> & VariantProps<typeof toggleVariants>
+  React.ComponentPropsWithoutRef<typeof ToggleGroupPrimitive.Root> &
+    VariantProps<typeof toggleVariants>
 >(({ className, size, children, ...props }, ref) => (
-  <ToggleGroupPrimitive.Root
+  <ToggleGroupRoot
     ref={ref}
     className={cn(
       'inline-flex items-center gap-1 rounded-full border border-hairline bg-card/70 p-1 shadow-panel',
@@ -47,13 +63,14 @@ const ToggleGroup = React.forwardRef<
     {...props}
   >
     <ToggleGroupContext.Provider value={{ size }}>{children}</ToggleGroupContext.Provider>
-  </ToggleGroupPrimitive.Root>
+  </ToggleGroupRoot>
 ));
 ToggleGroup.displayName = ToggleGroupPrimitive.Root.displayName;
 
 const ToggleGroupItem = React.forwardRef<
   React.ElementRef<typeof ToggleGroupPrimitive.Item>,
-  React.ComponentPropsWithoutRef<typeof ToggleGroupPrimitive.Item> & VariantProps<typeof toggleVariants>
+  React.ComponentPropsWithoutRef<typeof ToggleGroupPrimitive.Item> &
+    VariantProps<typeof toggleVariants>
 >(({ className, children, size, ...props }, ref) => {
   const context = React.useContext(ToggleGroupContext);
   return (

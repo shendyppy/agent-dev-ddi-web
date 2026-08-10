@@ -352,9 +352,7 @@ def chunk_file(path: Path) -> list[IndexedChunk]:
         # collected for this section. Use only the levels that actually
         # exist so we don't show an empty trailing arrow.
         heading_path = " > ".join(
-            section.metadata[h]
-            for _, h in MARKDOWN_HEADERS_TO_SPLIT_ON
-            if h in section.metadata
+            section.metadata[h] for _, h in MARKDOWN_HEADERS_TO_SPLIT_ON if h in section.metadata
         )
         section_meta = {**base_metadata}
         if heading_path:
@@ -556,8 +554,7 @@ def build_index() -> None:
     if stale_removed:
         print(f"[indexing] pruned {stale_removed} stale chunk(s) from deleted/renamed files")
 
-    print(f"[indexing] done — collection '{COLLECTION_NAME}' now has "
-          f"{collection.count()} chunk(s)")
+    print(f"[indexing] done — collection '{COLLECTION_NAME}' now has {collection.count()} chunk(s)")
 
 
 if __name__ == "__main__":

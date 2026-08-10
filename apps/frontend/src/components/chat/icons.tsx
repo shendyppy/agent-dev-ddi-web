@@ -8,13 +8,13 @@
 type IconProps = { className?: string };
 
 const base = {
-  viewBox: "0 0 24 24",
-  fill: "none",
-  stroke: "currentColor",
-  "stroke-width": "2",
-  "stroke-linecap": "round" as const,
-  "stroke-linejoin": "round" as const,
-  "aria-hidden": "true" as const,
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  'stroke-width': '2',
+  'stroke-linecap': 'round' as const,
+  'stroke-linejoin': 'round' as const,
+  'aria-hidden': 'true' as const,
 };
 
 /**
@@ -68,6 +68,32 @@ export const LayersIcon = ({ className }: IconProps) => (
   <svg class={className} {...base}>
     <path d="M12 3 3 8l9 5 9-5-9-5Z" />
     <path d="M3 13l9 5 9-5" />
+  </svg>
+);
+
+/** Circled "i" — marks supplementary help text on a compact control.
+ *
+ *  Takes `title` and renders it as an SVG `<title>` child rather than a `title`
+ *  attribute. Same hover tooltip, but it also becomes the element's accessible
+ *  name, so a screen reader reads the explanation instead of announcing an
+ *  unlabelled graphic. `aria-hidden` is dropped here for the same reason — this
+ *  icon carries information, unlike the decorative ones above. */
+export const InfoIcon = ({ className, title }: IconProps & { title?: string }) => (
+  <svg
+    class={className}
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    role={title ? 'img' : undefined}
+    aria-hidden={title ? undefined : 'true'}
+  >
+    {title && <title>{title}</title>}
+    <circle cx="12" cy="12" r="9" />
+    <path d="M12 16v-5" />
+    <path d="M12 8h.01" />
   </svg>
 );
 

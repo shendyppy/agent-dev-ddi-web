@@ -27,11 +27,14 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground hover:bg-primary/90 motion-safe:hover:-translate-y-0.5',
-        secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80 motion-safe:hover:-translate-y-0.5',
+        default:
+          'bg-primary text-primary-foreground hover:bg-primary/90 motion-safe:hover:-translate-y-0.5',
+        secondary:
+          'bg-secondary text-secondary-foreground hover:bg-secondary/80 motion-safe:hover:-translate-y-0.5',
         outline: 'border border-input bg-background text-foreground hover:bg-muted',
         ghost: 'text-foreground hover:bg-muted',
-        destructive: 'bg-destructive text-destructive-foreground hover:bg-destructive/90 motion-safe:hover:-translate-y-0.5',
+        destructive:
+          'bg-destructive text-destructive-foreground hover:bg-destructive/90 motion-safe:hover:-translate-y-0.5',
         link: 'text-primary underline-offset-4 hover:underline',
       },
       size: {
@@ -46,14 +49,19 @@ const buttonVariants = cva(
 );
 
 export interface ButtonProps
-  extends React.ButtonHTMLAttributes<HTMLButtonElement>,
-    VariantProps<typeof buttonVariants> {
+  extends React.ButtonHTMLAttributes<HTMLButtonElement>, VariantProps<typeof buttonVariants> {
   asChild?: boolean;
 }
 
 const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
   ({ className, variant, size, asChild = false, ...props }, ref) => {
-    const Comp = asChild ? Slot : 'button';
+    // Cast to the intrinsic tag rather than leaving the `Slot | 'button'`
+    // union: TypeScript intersects the two ref types across the union, and
+    // Slot's ref (RefObject<HTMLElement>) does not intersect cleanly with
+    // HTMLButtonElement, so a correctly-typed ref is rejected. Both branches
+    // accept the same ref at runtime — Slot forwards it to whatever child it
+    // renders — so this narrows the type without changing behaviour.
+    const Comp = (asChild ? Slot : 'button') as 'button';
     return (
       <Comp ref={ref} className={cn(buttonVariants({ variant, size }), className)} {...props} />
     );

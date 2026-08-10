@@ -37,7 +37,9 @@ export default function Chat() {
     // stays as the preceding declaration for engines without dvh support.
     <div class="app-shell flex h-screen h-dvh overflow-hidden font-sans text-foreground">
       {/* Desktop layout spacer — pushes main content as panel slides in */}
-      <div class={`hidden sm:block shrink-0 transition-[width] duration-250 ease-in-out ${historyOpen ? 'w-64' : 'w-0'}`} />
+      <div
+        class={`hidden sm:block shrink-0 transition-[width] duration-250 ease-in-out ${historyOpen ? 'w-64' : 'w-0'}`}
+      />
 
       <HistoryPanel
         copy={chat.copy}
@@ -60,59 +62,73 @@ export default function Chat() {
       />
 
       <div class="flex flex-1 flex-col overflow-hidden">
-      <ChatHeader
-        copy={chat.copy}
-        lang={chat.lang}
-        onLangChange={chat.setLang}
-        modelLabel={chat.modelLabel}
-        products={chat.products}
-        activeProductId={chat.activeProductId}
-        onScopeChange={chat.chooseScope}
-        scopeChosen={chat.scopeChosen}
-        user={auth.user}
-        onLogin={auth.login}
-        onLogout={() => { auth.logout(); chat.newChat(); setActiveSessionId(null); setHistoryOpen(false); }}
-        onHistoryToggle={() => setHistoryOpen((o) => !o)}
-      />
+        <ChatHeader
+          copy={chat.copy}
+          lang={chat.lang}
+          onLangChange={chat.setLang}
+          products={chat.products}
+          activeProductId={chat.activeProductId}
+          onScopeChange={chat.chooseScope}
+          scopeChosen={chat.scopeChosen}
+          user={auth.user}
+          onLogin={auth.login}
+          onLogout={() => {
+            auth.logout();
+            chat.newChat();
+            setActiveSessionId(null);
+            setHistoryOpen(false);
+          }}
+          onHistoryToggle={() => setHistoryOpen((o) => !o)}
+          models={chat.models}
+          modelsLoading={chat.modelsLoading}
+          modelsFailed={chat.modelsFailed}
+          onRetryModels={chat.retryBootstrap}
+          modelId={chat.modelId}
+          onModelChange={chat.setModelId}
+          apiKey={chat.apiKey}
+          onApiKeyChange={chat.setApiKey}
+          offlineMode={chat.offlineMode}
+          onOfflineModeChange={chat.setOfflineMode}
+        />
 
-      <MessageList
-        copy={chat.copy}
-        messages={chat.messages}
-        busy={chat.busy}
-        typingLabel={chat.typingLabel}
-        endOfMessagesRef={chat.endOfMessagesRef}
-        onPickPrompt={(p) => {
-          chat.setInput(p);
-          chat.textareaRef.current?.focus();
-        }}
-        // Retry re-sends the last user turn. If there is none (edge case) send()
-        // no-ops on the empty string.
-        onRetry={() =>
-          chat.send(chat.messages.filter((m) => m.role === 'user').slice(-1)[0]?.content ?? '')
-        }
-        products={chat.products}
-        productsLoading={chat.productsLoading}
-        scopeChosen={chat.scopeChosen}
-        onChooseScope={chat.chooseScope}
-        backendStatus={chat.backendStatus}
-        onRetryBootstrap={chat.retryBootstrap}
-      />
+        <MessageList
+          copy={chat.copy}
+          messages={chat.messages}
+          busy={chat.busy}
+          typingLabel={chat.typingLabel}
+          endOfMessagesRef={chat.endOfMessagesRef}
+          onPickPrompt={(p) => {
+            chat.setInput(p);
+            chat.textareaRef.current?.focus();
+          }}
+          // Retry re-sends the last user turn. If there is none (edge case) send()
+          // no-ops on the empty string.
+          onRetry={() =>
+            chat.send(chat.messages.filter((m) => m.role === 'user').slice(-1)[0]?.content ?? '')
+          }
+          products={chat.products}
+          productsLoading={chat.productsLoading}
+          scopeChosen={chat.scopeChosen}
+          onChooseScope={chat.chooseScope}
+          backendStatus={chat.backendStatus}
+          onRetryBootstrap={chat.retryBootstrap}
+        />
 
-      {/* Translucent + blurred so the transcript visibly passes *under* the
+        {/* Translucent + blurred so the transcript visibly passes *under* the
           composer as it scrolls, which is what sells the layering. The border
           is an edge-fade rule rather than a full-bleed border-t.
           pb uses safe-area-inset so the bar clears the iOS home indicator. */}
-      <footer class="edge-fade edge-fade--top z-10 flex w-full flex-col items-center gap-2.5 bg-background/80 px-4 pt-3 backdrop-blur-xl sm:px-6 sm:pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-6">
-        <ChatComposer
-          copy={chat.copy}
-          value={chat.input}
-          onChange={chat.setInput}
-          onSubmit={() => chat.send()}
-          busy={chat.busy}
-          textareaRef={chat.textareaRef}
-          enabled={chat.scopeChosen}
-        />
-      </footer>
+        <footer class="edge-fade edge-fade--top z-10 flex w-full flex-col items-center gap-2.5 bg-background/80 px-4 pt-3 backdrop-blur-xl sm:px-6 sm:pt-4 pb-[max(1rem,env(safe-area-inset-bottom))] sm:pb-6">
+          <ChatComposer
+            copy={chat.copy}
+            value={chat.input}
+            onChange={chat.setInput}
+            onSubmit={() => chat.send()}
+            busy={chat.busy}
+            textareaRef={chat.textareaRef}
+            enabled={chat.scopeChosen}
+          />
+        </footer>
       </div>
     </div>
   );

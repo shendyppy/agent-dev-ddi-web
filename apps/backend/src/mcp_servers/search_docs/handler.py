@@ -46,22 +46,27 @@ How to extend
 
 from __future__ import annotations
 
-from typing import Any
-
-from chromadb import PersistentClient
-from fastembed import TextEmbedding
-from pydantic import BaseModel, Field
-
 # Local imports of orchestrator-side modules are forbidden in MCP servers
 # (per mcp_servers/AGENTS.md). Read the persistence dir straight from the
 # env var that ``agent.settings`` exposes, with a default that matches the
 # Settings default — keeps the server runnable standalone.
 import os
 from pathlib import Path
+from typing import Any
 
-CHROMA_PERSIST_DIR = Path(
-    os.environ.get("CHROMA_PERSIST_DIR", str(Path.cwd() / ".data" / "chroma"))
-)
+from chromadb import PersistentClient
+from fastembed import TextEmbedding
+from pydantic import BaseModel, Field
+
+_REPO_ROOT = Path(__file__).resolve().parents[5]
+CHROMA_PERSIST_DIR = Path(os.environ.get("CHROMA_PERSIST_DIR", ".data/chroma"))
+if not CHROMA_PERSIST_DIR.is_absolute():
+    # Anchored to the repo root, never the cwd. This server runs as a
+    # subprocess and inherits the orchestrator's working directory, so a
+    # cwd-relative path silently split the index in two: `just index` (which
+    # cd's into apps/backend) wrote one, anything started from the repo root
+    # read another — see agent.settings.resolve_from_repo_root.
+    CHROMA_PERSIST_DIR = (_REPO_ROOT / CHROMA_PERSIST_DIR).resolve()
 
 # Must match agent.indexing.EMBEDDING_MODEL_NAME — they're separate
 # constants on purpose (each module is independently runnable) but they
@@ -164,22 +169,20 @@ async def handle(payload: SearchInput) -> SearchOutput:
         return SearchOutput(
             chunks=[],
             warning=(
-                "the documentation index has not been built yet — "
-                "run `just index` and try again"
+                "the documentation index has not been built yet — run `just index` and try again"
             ),
         )
 
     client = _get_client()
     try:
         collection = client.get_collection(name=COLLECTION_NAME)
-    except Exception:
+    except Exception:  # noqa: BLE001 — Chroma raises a bare Exception here
         # ``get_collection`` raises if the named collection is absent.
         # That maps to the same "no index" experience for the LLM.
         return SearchOutput(
             chunks=[],
             warning=(
-                f"collection {COLLECTION_NAME!r} does not exist yet — "
-                "run `just index` to build it"
+                f"collection {COLLECTION_NAME!r} does not exist yet — run `just index` to build it"
             ),
         )
 

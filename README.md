@@ -25,7 +25,7 @@ Built **AI-first**: prompts are versioned artifacts, every change is gated by an
 |---|---|---|
 | Frontend | **Astro** + Preact island for chat | Static-first, ship tiny JS; chat island isolates state |
 | Backend orchestrator | **FastAPI** + **LangGraph** | Explicit, testable agent graph (not opaque `AgentExecutor`) |
-| LLM provider | **LiteLLM** wrapper, default `claude-sonnet-4-6` | Swap providers via env var; no vendor lock-in |
+| LLM provider | **LiteLLM** wrapper, default `gemini/gemini-3.6-flash` | Swap providers via env var; no vendor lock-in |
 | Skills | **MCP servers** (one per skill) | Portable — reusable from Claude Desktop / Cursor / our agent |
 | Vector store | **ChromaDB** (file-backed) | Zero-ops, persists to disk, no extra service |
 | Embeddings | **fastembed** (local) | No API key, no cost, runs CPU-fast |
@@ -142,7 +142,7 @@ The doc format is strict on purpose — see [`docs/PRODUCT-DOC-FORMAT.md`](docs/
 
 ## How to add a new skill
 
-See [`apps/backend/mcp_servers/AGENTS.md`](apps/backend/mcp_servers/AGENTS.md). TL;DR:
+See [`apps/backend/src/mcp_servers/AGENTS.md`](apps/backend/src/mcp_servers/AGENTS.md). TL;DR:
 
 1. Copy `mcp_servers/_template/` to `mcp_servers/<your_skill>/`.
 2. Fill in `skill.md` (description, when-to-use, input/output examples).

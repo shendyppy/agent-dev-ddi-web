@@ -28,7 +28,7 @@ The canonical flow is in [`AGENTS.md`](AGENTS.md#adding-a-new-skill-most-common-
 ## Things you might be tempted to do (don't)
 
 - **Don't** run `pip install` directly. Use `uv add <pkg>` so it lands in `pyproject.toml` + lockfile.
-- **Don't** edit `apps/backend/main.py` — that's a Gemini leftover slated for removal. The real entry point is `apps/backend/src/agent/server.py`.
+- **Don't** go looking for `apps/backend/main.py` — it was the pre-MCP entry point and ADR 0007 removed it. The real entry point is `apps/backend/src/agent/server.py`.
 - **Don't** rewrite the Makefile. It exists only as a thin delegator to `just` for muscle-memory; canonical recipes are in `justfile`.
 - **Don't** suggest deploying to EC2. The previous project hit cost overruns there — see [`docs/adr/0005-deployment-strategy.md`](docs/adr/0005-deployment-strategy.md).
 
@@ -47,7 +47,7 @@ These are likely relevant during development:
 | User asks for... | You edit... |
 |---|---|
 | "Make the agent answer faster" | `prompts/system/main-agent.md` (instructions) or `apps/backend/src/agent/graph.py` (parallelize tool calls) |
-| "Add screenshot capability for X" | `packages/e2e/tests/<x>.spec.ts` + register scenario in `apps/backend/mcp_servers/capture_screenshot/` |
+| "Add screenshot capability for X" | `packages/e2e/tests/<x>.spec.ts` + register scenario in `apps/backend/src/mcp_servers/capture_screenshot/` |
 | "Index this new product's docs" | `docs/product-catalog.md` + `apps/backend/src/agent/indexing.py` sources |
 | "Swap to GPT-4o" | `.env` (`LITELLM_MODEL=gpt-4o`). No code change. |
 | "Add a new chat UI feature" | `apps/frontend/src/components/Chat.tsx` (Preact island) |

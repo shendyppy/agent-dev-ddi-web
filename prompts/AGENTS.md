@@ -21,7 +21,12 @@ Every prompt file is Markdown with YAML frontmatter:
 ---
 name: main-agent
 version: 1
-model: claude-sonnet-4-6     # advisory — the orchestrator may override
+model: gemini/gemini-3.6-flash # the model this prompt was last evaluated
+                              # against. `prompts.py` never reads it — the
+                              # runtime model comes from LITELLM_MODEL. Keep it
+                              # truthful anyway: it is how a reader knows
+                              # whether the tuning behind these words still
+                              # applies. Update it with `last_evaluated`.
 description: System prompt for the primary documentation assistant.
 inputs:                       # template variables expected by the loader
   - product_catalog

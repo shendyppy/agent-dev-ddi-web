@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [development, main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # The eval suite runs with --fast, which never reaches a provider. Set anyway
+  # so `agent.settings` constructs cleanly and the offline path is entered by
+  # the LLM_FAKE_MODE flag rather than by a missing-key error, which would look
+  # like the same green result for the wrong reason.
+  LLM_FAKE_MODE: "true"
+  # Absolute so every process agrees regardless of cwd — see
+  # agent.settings.resolve_from_repo_root.
+  CHROMA_PERSIST_DIR: .data/chroma
+
+jobs:
+  backend:
+    name: backend (lint, format, tests)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+        working-directory: apps/backend
+      - name: ruff check
+        run: uv run ruff check .
+        working-directory: apps/backend
+      - name: ruff format --check
+        run: uv run ruff format --check .
+        working-directory: apps/backend
+      - name: pytest
+        run: uv run pytest
+        working-directory: apps/backend
+
+  frontend:
+    name: frontend (types, format, tests, build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: apps/frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: apps/frontend
+      - name: astro check
+        run: pnpm lint
+        working-directory: apps/frontend
+      - name: prettier --check
+        run: pnpm fmt:check
+        working-directory: apps/frontend
+      - name: vitest
+        run: pnpm test
+        working-directory: apps/frontend
+      - name: build
+        run: pnpm build
+        working-directory: apps/frontend
+
+  evals:
+    name: evals (fast)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - run: uv sync
+        working-directory: apps/backend
+
+      - name: assertion unit tests
+        run: uv run --project apps/backend python -m pytest evals -q
+        env:
+          PYTHONPATH: apps/backend/src:.
+
+      # fastembed downloads ~130MB of ONNX weights on first use. Cached by
+      # lockfile so a normal PR does not re-fetch it.
+      - name: cache embedding model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/fastembed
+          key: fastembed-${{ hashFiles('apps/backend/uv.lock') }}
+
+      - name: build index
+        run: uv run --project apps/backend python -m agent.indexing
+        env:
+          PYTHONPATH: apps/backend/src
+          # Not checked out here. indexing.py skips the discoverer when the
+          # path is absent, so CI indexes the in-repo corpus only — which is
+          # what the cases assert against.
+          TEP_WEB_ROOT: /nonexistent
+
+      # --fast runs the real graph, real MCP servers and real retrieval with a
+      # synthetic LLM. It gates scope injection, retrieval and "does the graph
+      # still run"; it deliberately does NOT gate answer quality, and prints
+      # exactly which assertions it skipped. Prompt changes still need a full
+      # `just eval` locally — that one costs real quota, so it stays off CI.
+      - name: eval suite (fast)
+        run: uv run --project apps/backend python -m evals.run --fast
+        env:
+          PYTHONPATH: apps/backend/src:.

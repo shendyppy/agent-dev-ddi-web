@@ -10,9 +10,7 @@ mcp = FastMCP("search_docs")
 
 
 @mcp.tool()
-async def search_documentation(
-    query: str, top_k: int = 5, product_id: str | None = None
-) -> dict:
+async def search_documentation(query: str, top_k: int = 5, product_id: str | None = None) -> dict:
     """Semantic search over internal documentation.
 
     Use this FIRST for any user question about a product, feature, how to

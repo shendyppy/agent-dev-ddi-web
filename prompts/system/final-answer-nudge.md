@@ -1,7 +1,7 @@
 ---
 name: final-answer-nudge
 version: 1
-model: claude-sonnet-4-6
+model: gemini/gemini-3.6-flash
 description: >
   Injected as a final user turn when the agent exhausts its tool-round budget,
   to force an answer from the evidence already retrieved.

@@ -28,6 +28,12 @@ expected:
   tool_args_must_include:
     search_documentation:
       product_id: tep-cms
+  # End-to-end proof, not just proof of intent: tool_args_must_include shows the
+  # scope was dispatched, this shows what came back actually honoured it. Chroma
+  # applies `where` as a pre-filter, so a scoped search can only ever surface
+  # tep-cms chunks — if this ever fails, the filter stopped being applied.
+  must_retrieve_any:
+    - docs/knowledge-base/tep-cms-doc-context.md
   must_not_contain:
     - "Amazon Chime"          # dash-participant-saas only — must not leak in
     - "LiveKit"               # new-assessment-center-participant only
