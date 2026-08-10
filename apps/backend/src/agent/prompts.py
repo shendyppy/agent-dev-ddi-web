@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from pathlib import Path
 
 import frontmatter
 
@@ -40,9 +39,7 @@ class Prompt:
 
         rendered = _PLACEHOLDER.sub(replace, self.body)
         if missing:
-            raise ValueError(
-                f"Prompt {self.name!r} missing inputs: {sorted(set(missing))}"
-            )
+            raise ValueError(f"Prompt {self.name!r} missing inputs: {sorted(set(missing))}")
         return rendered
 
 

@@ -44,7 +44,7 @@ from typing import Annotated, Any, TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.graph.message import add_messages
 
-from . import llm, mcp_clients, prompts
+from . import llm, mcp_clients, prompts, relevance
 from .settings import REPO_ROOT, settings
 
 # The one tool whose arguments the orchestrator is allowed to rewrite, so the
@@ -81,6 +81,32 @@ class AgentState(TypedDict):
     # guard in :func:`_route_after_llm`. No reducer — ``call_tools`` returns
     # the incremented value, which overwrites the previous one.
     tool_rounds: int
+    # Relevance verdict over whatever the last documentation search returned:
+    # ``{question, product_id, chunks: [...], confidence}``. Written by
+    # :func:`call_tools`, read by ``server._stream_graph_events`` which forwards
+    # it to the browser as the ``retrieval`` SSE event. None on turns that ran
+    # no search.
+    #
+    # It has to be declared here even though no node reads it back: LangGraph
+    # validates every key a node returns against this schema and drops (in
+    # older versions, rejects) anything it does not recognise. Declaring it is
+    # what makes the field survive the trip to ``astream``.
+    retrieval: dict[str, Any] | None
+    # Model the user picked in the UI, and their own provider key (BYOK, ADR
+    # 0010). Both None means "use whatever the deployment configured" — the
+    # pre-BYOK behaviour, unchanged.
+    #
+    # ``api_key`` is the one piece of state here that must never be logged,
+    # traced or persisted. It rides in the graph state because that is the only
+    # channel from the request to the LLM node, and it stops there:
+    # ``llm.acompletion`` hands it to the provider and nothing else sees it.
+    model: str | None
+    api_key: str | None
+    # Answer this turn from the local index without calling the provider. The
+    # per-request twin of settings.llm_fake_mode — see llm.acompletion. Scoped
+    # per request so one user's toggle cannot switch the model off for everyone
+    # sharing the deployment.
+    offline: bool
 
 
 # ─── System prompt assembly ──────────────────────────────────────────────
@@ -283,6 +309,11 @@ async def _run_llm(state: AgentState, *, offer_tools: bool) -> dict[str, Any]:
         messages,
         tools=tools or None,
         max_input_tokens=settings.agent_max_input_tokens,
+        # Both default to None, which is exactly the pre-BYOK call: the gateway
+        # falls back to settings.litellm_model and its own credential chain.
+        model=state.get("model"),
+        api_key=state.get("api_key"),
+        offline=bool(state.get("offline")),
     )
     msg = response.choices[0].message
     # LiteLLM returns provider-specific message objects; pydantic dump
@@ -321,6 +352,59 @@ async def final_answer(state: AgentState) -> dict[str, Any]:
     return await _run_llm(state, offer_tools=False)
 
 
+def _last_user_question(messages: list[Any]) -> str:
+    """The most recent thing the user actually typed.
+
+    The relevance gate scores passages against the *question*, so the panel has
+    to report the same string the gate used — reconstructing it on the frontend
+    from the transcript would be a second source of truth that drifts the first
+    time history compression changes.
+    """
+    for msg in reversed(messages):
+        as_dict = _to_openai_dict(msg)
+        if as_dict.get("role") == "user":
+            content = as_dict.get("content")
+            if isinstance(content, str) and content.strip():
+                return content.strip()
+    return ""
+
+
+def _retrieval_payload(
+    tool_content: str, question: str, product_id: str | None
+) -> dict[str, Any] | None:
+    """Judge a ``search_documentation`` result for the evidence panel.
+
+    Returns None when the payload carried no chunks at all — an empty panel is
+    noise, and the agent's own prose already covers "I found nothing".
+
+    Note this is *observation only*: the ranking here does not change which
+    chunks reach the model. The model still sees the raw tool result, exactly as
+    before. Feeding this ranking back into the model's input is a real
+    improvement and a real behaviour change, so it belongs behind its own eval
+    cases rather than riding along with a transparency feature.
+    """
+    chunks, _warning = relevance.extract_chunks(tool_content)
+    if not chunks:
+        return None
+    ranked = relevance.rank(chunks, question)
+    return {
+        "question": question,
+        "product_id": product_id,
+        "confidence": relevance.confidence(ranked),
+        "chunks": [
+            {
+                "source": r.source,
+                "heading": r.heading,
+                "score": round(r.score, 4),
+                "overlap": r.overlap,
+                "verdict": r.verdict,
+                "excerpt": r.excerpt,
+            }
+            for r in ranked
+        ],
+    }
+
+
 async def call_tools(state: AgentState) -> dict[str, Any]:
     """Run every tool the LLM asked for and feed results back as messages.
 
@@ -347,7 +431,13 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
 
     rounds = state.get("tool_rounds", 0) + 1
     scope = state.get("product_id")
+    question = _last_user_question(state["messages"])
     tool_messages: list[dict[str, Any]] = []
+    dispatched_calls: list[dict[str, Any]] = []
+    # Evidence for the UI panel. Last search wins when the model runs several in
+    # one round — the panel sits under a single answer, and the most recent
+    # search is the one that shaped it.
+    retrieval: dict[str, Any] | None = None
     for tc in tool_calls:
         # Tool calls come in OpenAI shape: {id, type, function: {name, arguments}}.
         # ``arguments`` is a JSON-encoded string per the spec.
@@ -384,6 +474,16 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
         if scope and name == _SCOPED_TOOL:
             arguments["product_id"] = scope
 
+        # Remember what was actually dispatched, not what the model asked for.
+        # See the history-correction block at the end of this function.
+        dispatched_calls.append(
+            {
+                "id": tc_id,
+                "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments)},
+            }
+        )
+
         try:
             result = await mcp_clients.call_tool(name, arguments)
             content = result if isinstance(result, str) else json.dumps(result, default=str)
@@ -394,6 +494,14 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 — same rationale as above
             content = f"error: tool {name!r} raised {type(exc).__name__}: {exc}"
 
+        if name == _SCOPED_TOOL:
+            # Never let the panel break the turn: this is a display extra, and a
+            # malformed payload must not cost the user their answer.
+            try:
+                retrieval = _retrieval_payload(content, question, scope) or retrieval
+            except Exception as exc:  # noqa: BLE001
+                print(f"[graph] could not rank retrieval for the panel: {exc}", file=sys.stderr)
+
         tool_messages.append(
             {
                 "role": "tool",
@@ -403,7 +511,38 @@ async def call_tools(state: AgentState) -> dict[str, Any]:
             }
         )
 
-    return {"messages": tool_messages, "tool_rounds": rounds}
+    # ── Make the history say what actually happened ──────────────────────
+    # Scope injection above rewrote the arguments we dispatched, but the
+    # assistant message still records the model's original request. That gap
+    # has two costs. The model reads its own ignored `product_id` back on the
+    # next hop and can reasonably conclude the scope it named was honoured —
+    # while main-agent v8 tells it the scope is applied server-side, so the
+    # transcript contradicts the instructions. And nothing downstream (evals,
+    # Langfuse, a future audit) can see the enforced value at all; the ADR 0009
+    # guarantee becomes unobservable from outside this function.
+    #
+    # `add_messages` replaces rather than appends when a message carries an
+    # existing id, so re-emitting the assistant turn with the dispatched
+    # arguments corrects the record in place. Skipped when the message has no
+    # id (plain-dict state, as in unit tests) — without one the reducer would
+    # mint a fresh uuid and duplicate the turn, orphaning its tool replies.
+    messages: list[dict[str, Any]] = []
+    last_id = getattr(state["messages"][-1], "id", None)
+    if last_id and dispatched_calls != tool_calls:
+        messages.append(
+            {
+                "role": "assistant",
+                "id": last_id,
+                "content": last.get("content") or "",
+                "tool_calls": dispatched_calls,
+            }
+        )
+
+    return {
+        "messages": [*messages, *tool_messages],
+        "tool_rounds": rounds,
+        "retrieval": retrieval,
+    }
 
 
 # ─── Routing ─────────────────────────────────────────────────────────────

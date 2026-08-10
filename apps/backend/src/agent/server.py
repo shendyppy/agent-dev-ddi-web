@@ -7,8 +7,17 @@ The HTTP surface is intentionally tiny — five endpoints:
 - ``GET /``                  → service identification (for humans / health probes).
 - ``GET /api/health``        → JSON liveness check (for load balancers).
 - ``GET /api/meta``          → service metadata (model label) for the FE header.
+- ``GET /api/models``        → curated model catalogue for the FE picker, each
+                              entry flagged available/unavailable against the
+                              caller's own key (ADR 0010).
 - ``GET /api/products``      → product catalogue for the FE picker (scopes chat).
 - ``POST /api/chat`` (SSE)   → the chatbot. Streams agent events as they happen.
+                              Optional ``X-Model-Id`` and ``X-Model-Api-Key``
+                              headers select the model and supply the caller's
+                              own credential. Headers, not body fields — see the
+                              docstring on :func:`chat`. ``X-Offline-Mode: true``
+                              answers from the local index without calling the
+                              provider, for this request only.
 - ``GET /screenshots/{file}``→ static PNGs captured by the ``capture_screenshot``
                               skill. Mounted from ``settings.screenshot_dir``.
                               The agent embeds these URLs as markdown images in
@@ -33,6 +42,17 @@ Event names emitted:
 - ``message``     — JSON of one new message added to the conversation.
                     Shape: ``{role, content, tool_calls?, tool_call_id?, name?}``.
                     The frontend appends these to its message list.
+- ``retrieval``   — JSON verdict over the passages the last documentation
+                    search returned, produced by ``agent.relevance``.
+                    Shape: ``{question, product_id, confidence,
+                    chunks: [{source, heading, score, overlap, verdict,
+                    excerpt}]}``. Emitted from the ``tools`` node, so it always
+                    arrives BEFORE the answer it explains — the FE holds it and
+                    attaches it to the next assistant message with content.
+                    Rejected passages are included on purpose: seeing a
+                    high-scoring chunk thrown out for zero keyword overlap is
+                    what makes the ranking legible. Advisory only — it does not
+                    change what the model was given.
 - ``done``        — terminator. ``data`` is the session_id so the FE can
                     persist it for follow-up turns.
 - ``error``       — something blew up inside the graph. ``data`` is a
@@ -46,21 +66,21 @@ at the same time. Drift between the two is the most common SSE bug.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import traceback
 import uuid
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from typing import Any
 
-from contextlib import asynccontextmanager
-
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from . import mcp_clients
+from . import mcp_clients, models
 from .graph import get_graph
 from .settings import settings
 
@@ -102,19 +122,47 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS — allow the Astro dev server (and any localhost port, since
-# contributors run on whatever's free) to call /api/*. In production we'd
-# tighten this to the actual deployed FE origin.
+# ── CORS ─────────────────────────────────────────────────────────────
+# The loopback regex exists because contributors run the dev server on whatever
+# port is free. It is a DEV convenience and must not survive into a deployment:
+# combined with `allow_credentials=True` it would let any origin the regex
+# admits make credentialed calls, and since ADR 0010 those calls can carry a
+# user's provider key in `X-Model-Api-Key`.
+#
+# So the loopback allowance is now conditional rather than unconditional. Set
+# CORS_ALLOWED_ORIGINS to the real frontend origin(s) in any environment that is
+# not a developer laptop and the wildcard disappears; leave it unset and dev
+# keeps working exactly as before.
+_cors_origins = settings.cors_allowed_origins_list or [
+    f"http://localhost:{settings.frontend_port}",
+    f"http://127.0.0.1:{settings.frontend_port}",
+]
+# Only when no explicit allowlist was configured. `None` disables the regex.
+_cors_origin_regex = (
+    None if settings.cors_allowed_origins_list else r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$"
+)
+if not settings.cors_allowed_origins_list:
+    print(
+        "[server] CORS: no CORS_ALLOWED_ORIGINS set — allowing any loopback origin. "
+        "Set it before deploying.",
+        file=sys.stderr,
+    )
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        f"http://localhost:{settings.frontend_port}",
-        f"http://127.0.0.1:{settings.frontend_port}",
-    ],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
+    allow_origins=_cors_origins,
+    allow_origin_regex=_cors_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    # Named rather than "*": these are the only headers the API reads, and an
+    # explicit list means adding a new one is a decision instead of an accident.
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-Model-Id",
+        "X-Model-Api-Key",
+        "X-Offline-Mode",
+    ],
 )
 
 # Static screenshots — PNGs produced by the capture_screenshot skill (Playwright)
@@ -189,6 +237,26 @@ def meta() -> dict[str, str]:
     return {"model": settings.litellm_model}
 
 
+@app.get("/api/models")
+def list_models(x_model_api_key: str | None = Header(default=None)) -> dict[str, Any]:
+    """Models the picker may offer, each flagged with whether it can actually run.
+
+    Availability is resolved through the same credential chain the gateway uses
+    (``llm.resolve_api_key``), so an entry marked available here will
+    authenticate at send time — rather than being a second guess that drifts
+    from the real one.
+
+    The caller's own key is read from the header so the answer reflects *their*
+    access: one pasted OpenRouter key lights up every OpenRouter entry at once.
+    The key is used for the check and discarded; it is never echoed back, and
+    the response carries only booleans and the variable *name* to go and set.
+    """
+    return {
+        "models": models.available(x_model_api_key),
+        "default": models.default_model(),
+    }
+
+
 @app.get("/api/products")
 async def products() -> dict[str, Any]:
     """List the products the agent can answer about, for the FE picker.
@@ -217,7 +285,7 @@ async def products() -> dict[str, Any]:
         # skill is misregistered. Transient from the caller's point of view.
         traceback.print_exc()
         raise HTTPException(status_code=503, detail=f"product catalogue not ready: {exc}") from exc
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         traceback.print_exc()
         raise HTTPException(
             status_code=503, detail=f"product catalogue unavailable: {type(exc).__name__}"
@@ -257,6 +325,51 @@ def _format_message_for_wire(msg: Any) -> dict[str, Any]:
     return out
 
 
+# Shapes that are credentials wherever they appear. Redacting on shape as well
+# as on the exact known value matters because the caller's key is not the only
+# one that can reach an error string: a provider SDK can just as easily echo the
+# SERVER's key back, and server.py has no list of those to compare against —
+# they live in os.environ under 141 possible names.
+#
+# Deliberately narrow patterns. A greedy "anything long and random" rule would
+# scrub session ids and file hashes out of error messages and make real failures
+# undebuggable, which trades one blind spot for another.
+_SECRET_PATTERNS = (
+    re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),  # OpenAI, DeepSeek, OpenRouter, Anthropic
+    re.compile(r"\bAIza[A-Za-z0-9_-]{30,}"),  # Google / Gemini
+    re.compile(r"\b(?:gsk|xai|pplx)-[A-Za-z0-9_-]{16,}"),  # Groq, xAI, Perplexity
+    # `Bearer <token>` on its own, because the token is separated from the
+    # header name by the scheme word — `Authorization:\s*\S{12,}` matches
+    # "Bearer" itself and stops, leaving the credential in place.
+    re.compile(r"(?i)\bBearer\s+\S{12,}"),
+    re.compile(r"(?i)\b(?:api[-_]?key|authorization)\s*[=:]\s*\S{12,}"),
+)
+
+_REDACTED = "***redacted***"
+
+
+def _redact(text: str, secret: str | None) -> str:
+    """Strip credentials out of text before it leaves the process.
+
+    One of the three leak paths ADR 0010 names. Provider SDK errors are built by
+    code we do not control and have been known to echo request material back;
+    this endpoint forwards those strings verbatim to the browser, so the
+    redaction belongs here, at the boundary, rather than being assumed upstream.
+
+    Two passes, because they cover different failures: the exact value catches
+    the caller's key even in an unusual format, and the patterns catch keys this
+    function was never told about — including the deployment's own.
+
+    Cheap and unconditional on purpose: a missing redaction is a leaked key,
+    while a needless one costs a string scan.
+    """
+    if secret and len(secret) >= 8:
+        text = text.replace(secret, _REDACTED)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(_REDACTED, text)
+    return text
+
+
 async def _stream_graph_events(
     initial_state: dict[str, Any],
     session_id: str,
@@ -289,11 +402,16 @@ async def _stream_graph_events(
                         "event": "message",
                         "data": json.dumps(_format_message_for_wire(msg)),
                     }
+                # Emitted after the tool messages of the same node so the FE has
+                # already drawn its "found in the docs" chip by the time the
+                # evidence for it arrives.
+                if retrieval := (node_output or {}).get("retrieval"):
+                    yield {"event": "retrieval", "data": json.dumps(retrieval)}
     except Exception as exc:  # noqa: BLE001
         traceback.print_exc()
         yield {
             "event": "error",
-            "data": f"{type(exc).__name__}: {exc}",
+            "data": _redact(f"{type(exc).__name__}: {exc}", initial_state.get("api_key")),
         }
     finally:
         # ``done`` always fires, even on error, so the FE can release
@@ -302,7 +420,12 @@ async def _stream_graph_events(
 
 
 @app.post("/api/chat")
-async def chat(req: ChatRequest) -> EventSourceResponse:
+async def chat(
+    req: ChatRequest,
+    x_model_id: str | None = Header(default=None),
+    x_model_api_key: str | None = Header(default=None),
+    x_offline_mode: str | None = Header(default=None),
+) -> EventSourceResponse:
     """Stream a chatbot turn over Server-Sent Events.
 
     The full conversation history (from the FE) seeds the graph; per-turn
@@ -310,8 +433,22 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
     the graph here — ``EventSourceResponse`` consumes the async iterator
     lazily so the first byte goes out as soon as the graph yields its
     first event.
+
+    **Model and credential arrive as headers, not body fields** (ADR 0010). The
+    frontend persists request-shaped data to Supabase chat history, so keeping
+    the key out of the body means a future refactor cannot sweep it into that
+    table by accident. The protection is in the shape of the data rather than in
+    remembering to be careful. Both are optional; absent means "use whatever the
+    deployment configured", which is the pre-BYOK behaviour exactly.
     """
     session_id = req.session_id or str(uuid.uuid4())
+
+    # The picker is a UI affordance; this is the enforcement. Without it the
+    # header would let any caller aim the backend at an arbitrary provider using
+    # the server's own credentials.
+    if x_model_id and not models.is_allowed(x_model_id):
+        raise HTTPException(status_code=400, detail=f"model {x_model_id!r} is not allowed")
+
     initial_state = {
         "messages": [m.model_dump() for m in req.messages],
         "session_id": session_id,
@@ -319,5 +456,12 @@ async def chat(req: ChatRequest) -> EventSourceResponse:
         # Rounds are counted per turn, not per conversation — each request
         # gets a fresh budget.
         "tool_rounds": 0,
+        "retrieval": None,
+        "model": x_model_id,
+        "api_key": x_model_api_key,
+        # Explicit "true" only. Header values are strings, so a truthiness test
+        # would read "false" and "0" as on — the two things someone sending this
+        # off most plausibly writes.
+        "offline": (x_offline_mode or "").strip().lower() == "true",
     }
     return EventSourceResponse(_stream_graph_events(initial_state, session_id))

@@ -56,7 +56,13 @@ export function HistoryPanel({
             class="rounded p-1 text-muted-foreground hover:bg-muted transition-colors"
             aria-label="Tutup"
           >
-            <svg class="h-4 w-4" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              class="h-4 w-4"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M3 3l10 10M13 3L3 13" stroke-linecap="round" />
             </svg>
           </button>
@@ -68,7 +74,13 @@ export function HistoryPanel({
             onClick={onNewChat}
             class="flex w-full items-center gap-2 rounded-md border border-dashed border-border px-3 py-2 text-sm text-muted-foreground hover:border-primary hover:text-primary transition-colors"
           >
-            <svg class="h-3.5 w-3.5" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+            <svg
+              class="h-3.5 w-3.5"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2"
+            >
               <path d="M8 3v10M3 8h10" stroke-linecap="round" />
             </svg>
             {copy.historyNewChat}

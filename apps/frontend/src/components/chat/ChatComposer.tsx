@@ -19,12 +19,12 @@
  *   • handleInput  — controlled value + auto-grow up to max-h-[200px]
  *   • handleKeyDown — Enter sends, Shift+Enter inserts a newline
  */
-import type { Ref } from "preact";
-import { useState, useEffect } from "preact/hooks";
-import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { SendIcon, MicIcon } from "./icons";
-import type { Copy } from "@/lib/copy";
+import type { Ref } from 'preact';
+import { useState, useEffect } from 'preact/hooks';
+import { Button } from '@/components/ui/button';
+import { Textarea } from '@/components/ui/textarea';
+import { SendIcon, MicIcon } from './icons';
+import type { Copy } from '@/lib/copy';
 
 type ChatComposerProps = {
   copy: Copy;
@@ -52,21 +52,20 @@ export function ChatComposer({
 
   useEffect(() => {
     const SpeechRecognition =
-      (window as any).SpeechRecognition ||
-      (window as any).webkitSpeechRecognition;
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (SpeechRecognition) {
       const rec = new SpeechRecognition();
       rec.continuous = true; // Diubah ke true agar tidak langsung mati saat jeda pendek
-      rec.lang = "id-ID";
+      rec.lang = 'id-ID';
       rec.interimResults = true; // Kita aktifkan interim dengan manajemen state yang baik
 
       rec.onstart = () => setIsListening(true);
       rec.onend = () => setIsListening(false);
 
       rec.onresult = (event: any) => {
-        let finalTranscript = "";
-        let interimTranscript = "";
+        let finalTranscript = '';
+        let interimTranscript = '';
 
         // Loop semua hasil dari awal sampai akhir sesi speech saat ini
         for (let i = event.resultIndex; i < event.results.length; ++i) {
@@ -79,8 +78,7 @@ export function ChatComposer({
 
         // Gabungkan teks yang sudah final dengan yang masih ditebak (interim)
         // Trik smooth: Berikan spasi tipis jika keduanya ada
-        const fullText =
-          finalTranscript + (interimTranscript ? " " + interimTranscript : "");
+        const fullText = finalTranscript + (interimTranscript ? ' ' + interimTranscript : '');
 
         if (fullText.trim()) {
           onChange(fullText);
@@ -88,7 +86,7 @@ export function ChatComposer({
       };
 
       rec.onerror = (event: any) => {
-        console.error("Speech error", event.error);
+        console.error('Speech error', event.error);
         setIsListening(false);
       };
 
@@ -113,12 +111,12 @@ export function ChatComposer({
     const target = e.target as HTMLTextAreaElement;
     onChange(target.value);
     // Auto-grow to fit content, capped at 200px; beyond that it scrolls.
-    target.style.height = "auto";
+    target.style.height = 'auto';
     target.style.height = `${Math.min(target.scrollHeight, 200)}px`;
   };
 
   const handleKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       onSubmit();
     }
@@ -172,8 +170,8 @@ export function ChatComposer({
           variant="ghost"
           className={`h-10 w-10 shrink-0 rounded-full transition-all duration-200 ease-expo disabled:opacity-40 ${
             isListening
-              ? "bg-destructive text-destructive-foreground shadow-glow hover:bg-destructive/90 motion-safe:animate-pulse"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground"
+              ? 'bg-destructive text-destructive-foreground shadow-glow hover:bg-destructive/90 motion-safe:animate-pulse'
+              : 'text-muted-foreground hover:bg-muted hover:text-foreground'
           }`}
           onClick={toggleListening}
           disabled={busy || locked}

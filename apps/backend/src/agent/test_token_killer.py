@@ -24,8 +24,12 @@ def _tool_exchange(call_id: str, size: int = 1) -> list[dict]:
                 }
             ],
         },
-        {"role": "tool", "tool_call_id": call_id, "name": "search_documentation",
-         "content": "chunk " * size},
+        {
+            "role": "tool",
+            "tool_call_id": call_id,
+            "name": "search_documentation",
+            "content": "chunk " * size,
+        },
     ]
 
 
@@ -37,11 +41,7 @@ def _orphan_tool_ids(messages: list[dict]) -> set[str]:
         if m.get("role") == "assistant"
         for tc in (m.get("tool_calls") or [])
     }
-    return {
-        m["tool_call_id"]
-        for m in messages
-        if m.get("role") == "tool"
-    } - requested
+    return {m["tool_call_id"] for m in messages if m.get("role") == "tool"} - requested
 
 
 def test_count_tokens_basic():
@@ -123,10 +123,16 @@ def test_group_tool_exchanges_absorbs_parallel_replies():
             "role": "assistant",
             "content": "",
             "tool_calls": [
-                {"id": "a", "type": "function",
-                 "function": {"name": "search_documentation", "arguments": "{}"}},
-                {"id": "b", "type": "function",
-                 "function": {"name": "list_products", "arguments": "{}"}},
+                {
+                    "id": "a",
+                    "type": "function",
+                    "function": {"name": "search_documentation", "arguments": "{}"},
+                },
+                {
+                    "id": "b",
+                    "type": "function",
+                    "function": {"name": "list_products", "arguments": "{}"},
+                },
             ],
         },
         {"role": "tool", "tool_call_id": "a", "content": "ra"},
@@ -152,7 +158,7 @@ def test_prune_never_orphans_a_tool_reply():
     # And the reverse: no assistant tool_calls left without its reply.
     for i, m in enumerate(pruned):
         if m.get("role") == "assistant" and m.get("tool_calls"):
-            replies = {n.get("tool_call_id") for n in pruned[i + 1:]}
+            replies = {n.get("tool_call_id") for n in pruned[i + 1 :]}
             assert {tc["id"] for tc in m["tool_calls"]} <= replies
 
 

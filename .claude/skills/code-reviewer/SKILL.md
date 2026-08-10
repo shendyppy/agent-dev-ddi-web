@@ -18,7 +18,7 @@ You are reviewing code for correctness, fit-with-repo, and reviewability. This s
 ## Repo invariants (block-merge if violated without justification)
 
 - **Prompts as code**: any multi-line prompt string in `.py` files outside `apps/backend/src/agent/prompts.py` and `agent.prompts.load(...)` calls? → must move to `prompts/<name>.md` with frontmatter `version:`.
-- **Skills as MCP servers**: any new `@tool` decorator on the LangGraph graph? → must be relocated to `apps/backend/mcp_servers/<name>/`.
+- **Skills as MCP servers**: any new `@tool` decorator on the LangGraph graph? → must be relocated to `apps/backend/src/mcp_servers/<name>/`.
 - **Single LLM gateway**: any direct import of `litellm`, `openai`, `anthropic`, `google.genai`, etc. outside `apps/backend/src/agent/llm.py`? → must route through `agent.llm.acompletion`.
 - **`just` as the runner**: any new npm script, `Makefile` target beyond the existing delegator, or shell-script entry point that is not also exposed via `justfile`? → add a `just` recipe and document it.
 - **Eval-gated agent changes**: any prompt edit, model swap, skill addition, or chunking-strategy change without a new/updated case in `evals/cases/`? → add the case before merging. Without it, RAG regresses silently.
@@ -51,7 +51,7 @@ You are reviewing code for correctness, fit-with-repo, and reviewability. This s
 - [ ] Examples reflect realistic user phrasing, not contrived inputs.
 - [ ] If the prompt changes refusal behaviour, the matching `evals/cases/` case exists and asserts the new behaviour.
 
-### MCP skill (`apps/backend/mcp_servers/<name>/`)
+### MCP skill (`apps/backend/src/mcp_servers/<name>/`)
 
 - [ ] `skill.md` has Purpose / When to call / Inputs / Outputs / Failure modes / Side effects. Vague `skill.md` = under-called or mis-called skill.
 - [ ] One `@app.tool()` per public action. 5 tools in one server = probably 2 skills.

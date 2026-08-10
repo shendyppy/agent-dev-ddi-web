@@ -2,6 +2,11 @@
 .env
 .env.local
 .env.*.local
+# Catches .env.bak, .env.old, .env.save — the names an editor or a shell
+# one-liner produces. The three patterns above do NOT match them, so a backup
+# of a secrets file was committable by accident.
+.env.*
+!.env.example
 
 # Python
 __pycache__/

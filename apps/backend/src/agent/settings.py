@@ -8,9 +8,27 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+
+
+def resolve_from_repo_root(value: Path) -> Path:
+    """Anchor a possibly-relative path to the repo root instead of the cwd.
+
+    ``.env`` ships relative paths (``CHROMA_PERSIST_DIR=./.data/chroma``), and
+    a bare ``Path("./.data/chroma")`` resolves against whatever directory the
+    process happens to be started in. That silently forked the vector store in
+    two: ``just index`` runs ``cd apps/backend`` and wrote to
+    ``apps/backend/.data/chroma``, while anything launched from the repo root
+    read ``<root>/.data/chroma`` and found an empty index. It looked fine in
+    normal dev only because ``just dev-be`` also cd's into ``apps/backend``.
+
+    Absolute values are left alone, so pointing the store at a mounted volume
+    still works.
+    """
+    return value if value.is_absolute() else (REPO_ROOT / value).resolve()
 
 
 class Settings(BaseSettings):
@@ -30,9 +48,27 @@ class Settings(BaseSettings):
     # appear in the ListModels response. Verify a candidate with a real
     # generateContent call before pinning it here; ListModels is not proof.
     litellm_model: str = "gemini/gemini-3.6-flash"
-    anthropic_api_key: str | None = None
-    gemini_api_key: str | None = None
-    openai_api_key: str | None = None
+
+    # Generic provider credential — the last environment layer of
+    # llm.resolve_api_key (ADR 0010). Use this when you run ONE model and do not
+    # want to remember a vendor-specific variable name: set LITELLM_MODEL and
+    # MODEL_API_KEY and you are done.
+    #
+    # It replaced three fields (`anthropic_api_key`, `gemini_api_key`,
+    # `openai_api_key`) that were declared here and never read by anything.
+    # Authentication had been working only because `import litellm` calls
+    # `load_dotenv()` and loads the whole repo-root .env into os.environ — which
+    # made this module's "all env access goes through here" docstring untrue.
+    #
+    # Per-provider variables (GEMINI_API_KEY, DEEPSEEK_API_KEY, …) are still
+    # honoured and take precedence; they are read straight from os.environ
+    # rather than declared here, because LiteLLM ships 141 providers and
+    # enumerating them as fields is what produced the dead code above.
+    model_api_key: str | None = None
+    # Override the provider endpoint. Needed for self-hosted or
+    # OpenAI-compatible gateways (vLLM, LM Studio, a corporate proxy), which a
+    # key alone cannot describe. Left unset for hosted providers.
+    model_api_base: str | None = None
 
     # Retry policy (applied in agent.llm around every litellm call). The
     # cheaper/free Gemini tiers regularly throw transient 503 ("high demand")
@@ -107,6 +143,21 @@ class Settings(BaseSettings):
     frontend_port: int = 4321
     backend_port: int = 8000
 
+    # Comma-separated list of origins allowed to call /api/*. Leave empty in
+    # local development and any loopback origin is accepted, which is what lets
+    # contributors run the frontend on whatever port is free.
+    #
+    # SET THIS BEFORE DEPLOYING. `allow_credentials=True` plus a permissive
+    # origin rule would let an origin we did not intend make credentialed
+    # requests — and since ADR 0010 those requests can carry a user's provider
+    # key in `X-Model-Api-Key`.
+    cors_allowed_origins: str = ""
+
+    @property
+    def cors_allowed_origins_list(self) -> list[str]:
+        """Parsed :attr:`cors_allowed_origins`, empty when unset."""
+        return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
     # MCP
     mcp_transport: str = "stdio"
 
@@ -125,6 +176,11 @@ class Settings(BaseSettings):
     # Host-specific absolute path — override TEP_WEB_ROOT for other contributors
     # or CI. Outside REPO_ROOT on purpose: it is a separate project we ingest.
     tep_web_root: Path = Path("C:/Project/DDI/Acelents/tep-web")
+
+    @field_validator("chroma_persist_dir", "screenshot_dir", mode="after")
+    @classmethod
+    def _anchor_to_repo_root(cls, value: Path) -> Path:
+        return resolve_from_repo_root(value)
 
 
 settings = Settings()

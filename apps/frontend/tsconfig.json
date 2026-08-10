@@ -5,8 +5,18 @@
   "compilerOptions": {
     "jsx": "react-jsx",
     "jsxImportSource": "preact",
+    "types": ["node"],
     "paths": {
-      "@/*": ["./src/*"]
+      "@/*": ["./src/*"],
+      // Mirrors the `compat: true` alias astro.config.mjs hands to Vite. The
+      // shadcn-style ui/ components import from 'react' (that is how they ship
+      // upstream) and Vite rewrites those to preact/compat at bundle time, but
+      // TypeScript resolves modules on its own. Without these two entries it
+      // cannot find 'react' at all, every prop in ui/ silently degrades to
+      // `any`, and the strict mode this repo claims to run stops applying to
+      // exactly the components most likely to be copy-pasted into.
+      "react": ["./node_modules/preact/compat/"],
+      "react-dom": ["./node_modules/preact/compat/"]
     }
   }
 }

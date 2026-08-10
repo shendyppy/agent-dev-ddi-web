@@ -28,6 +28,49 @@ export type Message = {
   name?: string;
   id?: string;
   isError?: boolean;
+  // Evidence behind this answer, from the `retrieval` SSE event. Only ever set
+  // on an assistant message that has content — see useChat's send().
+  retrieval?: Retrieval;
+};
+
+// ─── Retrieval evidence ───────────────────────────────────────────────
+// Mirrors the `retrieval` SSE frame documented in the backend's server.py.
+// Produced by agent/relevance.py, which is the single source of truth for what
+// counts as a relevant passage — nothing here is recomputed on the client.
+//
+// Both `score` and `overlap` are present on purpose. On this corpus the score
+// alone is misleading: an English embedding model over Indonesian docs scores
+// "resep rendang padang" (0.514) ABOVE "gimana cara menjalankan proyek ini di
+// lokal" (0.501). Keyword overlap is what separates them, and showing the two
+// side by side is what makes a rejected high-scoring passage make sense.
+
+/** Why a passage did or did not make it into the answer. */
+export type Verdict =
+  /** Used as evidence. */
+  | 'strong'
+  /** Cleared every gate but lost the three-passage cap. */
+  | 'weak'
+  /** Failed the score floor or the keyword-overlap gate. */
+  | 'rejected';
+
+export type RankedChunk = {
+  source: string;
+  heading: string;
+  /** 1 - chroma_distance. Higher is better; can exceed 1 or go negative. */
+  score: number;
+  /** Question words found in the passage; a heading hit counts double. */
+  overlap: number;
+  verdict: Verdict;
+  excerpt: string;
+};
+
+export type Confidence = 'high' | 'medium' | 'low' | 'none';
+
+export type Retrieval = {
+  question: string;
+  product_id: string | null;
+  confidence: Confidence;
+  chunks: RankedChunk[];
 };
 
 // One product the agent can answer about. Comes from GET /api/products,
@@ -40,6 +83,96 @@ export type Product = {
 };
 
 export const API_BASE = import.meta.env.PUBLIC_API_BASE_URL ?? 'http://localhost:8000';
+
+// ─── Model selection + BYOK ───────────────────────────────────────────
+// Mirrors GET /api/models. See ADR 0010.
+//
+// The key lives in localStorage and is sent per request in a header — never in
+// the request body, because `saveHistory` persists body-shaped data to Supabase
+// and a credential must not be able to reach that table by accident.
+//
+// Known accepted risk: localStorage is readable by any XSS on the page. The main
+// XSS surface here is LLM-authored markdown, already sanitised by DOMPurify.
+
+export type ModelOption = {
+  id: string;
+  label: string;
+  /** Context window and per-million pricing, straight from LiteLLM's registry. */
+  note: string;
+  /** LiteLLM provider name — used to group the list. */
+  provider: string;
+  /** Pinned to the top of the picker as a suggestion, not a restriction. */
+  recommended: boolean;
+  /** Which env var credentials this entry — shown so an unavailable option can
+   *  tell the user what to go and get, instead of only refusing. */
+  env_key: string;
+  /** Whether the entry can be selected at all. */
+  available: boolean;
+  /** Where the credential comes from. `server` is guaranteed to authenticate;
+   *  `your-key` means it will use the pasted key, which may belong to a
+   *  different provider — we cannot tell, and guessing from the key's prefix
+   *  would be a bet on a format the providers can change. */
+  source: 'server' | 'your-key' | 'none';
+};
+
+export type ModelCatalogue = { models: ModelOption[]; default: string };
+
+const MODEL_KEY_STORAGE = 'docagent.modelApiKey';
+const MODEL_ID_STORAGE = 'docagent.modelId';
+
+export function loadStoredApiKey(): string {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(MODEL_KEY_STORAGE) ?? '';
+}
+
+export function storeApiKey(key: string): void {
+  if (typeof window === 'undefined') return;
+  if (key.trim()) window.localStorage.setItem(MODEL_KEY_STORAGE, key.trim());
+  else window.localStorage.removeItem(MODEL_KEY_STORAGE);
+}
+
+export function loadStoredModelId(): string {
+  if (typeof window === 'undefined') return '';
+  return window.localStorage.getItem(MODEL_ID_STORAGE) ?? '';
+}
+
+export function storeModelId(id: string): void {
+  if (typeof window === 'undefined') return;
+  if (id) window.localStorage.setItem(MODEL_ID_STORAGE, id);
+  else window.localStorage.removeItem(MODEL_ID_STORAGE);
+}
+
+/** Headers carrying the model choice and the caller's key.
+ *
+ *  Built in one place so no call site can forget the "header, never body" rule.
+ *  Omits each header entirely when empty — an empty `X-Model-Api-Key` would be
+ *  read by the backend as a supplied-but-blank key rather than as absent. */
+export function modelHeaders(
+  modelId: string,
+  apiKey: string,
+  offline = false,
+): Record<string, string> {
+  const headers: Record<string, string> = {};
+  if (modelId) headers['X-Model-Id'] = modelId;
+  if (apiKey.trim()) headers['X-Model-Api-Key'] = apiKey.trim();
+  // Sent only when on. The backend matches the literal "true", so an absent
+  // header and an explicit "false" mean the same thing.
+  if (offline) headers['X-Offline-Mode'] = 'true';
+  return headers;
+}
+
+const OFFLINE_STORAGE = 'docagent.offlineMode';
+
+export function loadStoredOffline(): boolean {
+  if (typeof window === 'undefined') return false;
+  return window.localStorage.getItem(OFFLINE_STORAGE) === 'true';
+}
+
+export function storeOffline(on: boolean): void {
+  if (typeof window === 'undefined') return;
+  if (on) window.localStorage.setItem(OFFLINE_STORAGE, 'true');
+  else window.localStorage.removeItem(OFFLINE_STORAGE);
+}
 
 // ─── Bootstrap fetch with retry ───────────────────────────────────────
 //
@@ -93,13 +226,17 @@ function delay(ms: number, signal?: AbortSignal): Promise<void> {
  */
 export async function fetchJsonWithRetry<T>(
   path: string,
-  { signal, maxAttempts = 12 }: { signal?: AbortSignal; maxAttempts?: number } = {},
+  {
+    signal,
+    maxAttempts = 12,
+    headers,
+  }: { signal?: AbortSignal; maxAttempts?: number; headers?: Record<string, string> } = {},
 ): Promise<T> {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
-      const res = await fetch(`${API_BASE}${path}`, { signal });
+      const res = await fetch(`${API_BASE}${path}`, { signal, headers });
       if (res.ok) return (await res.json()) as T;
       if (res.status < 500) throw new HttpError(res.status); // caller's problem, not a race
       lastError = new HttpError(res.status);
@@ -142,7 +279,12 @@ export function mapErrorToFriendly(raw: string, copy: Copy): string {
   if (s.includes('perday') || s.includes('per day') || s.includes('requests per day')) {
     return copy.errorQuotaExhausted;
   }
-  if (s.includes('429') || s.includes('rate') || s.includes('quota') || s.includes('resource_exhausted')) {
+  if (
+    s.includes('429') ||
+    s.includes('rate') ||
+    s.includes('quota') ||
+    s.includes('resource_exhausted')
+  ) {
     return copy.errorRateLimit;
   }
   if (s.includes('503') || s.includes('unavailable') || s.includes('overload')) {
@@ -206,7 +348,13 @@ DOMPurify.addHook('afterSanitizeAttributes', (node) => {
 export function renderMarkdown(content: string): string {
   const cached = MD_CACHE.get(content);
   if (cached !== undefined) return cached;
-  const html = DOMPurify.sanitize(marked.parse(content) as string, {
+  // Normalize Windows line endings BEFORE parsing. marked v18 copes with CRLF
+  // for most blocks but NOT for GFM tables — every row falls out as its own
+  // `<p>| … |</p>` paragraph, which is exactly the "raw pipe" mess offline
+  // answers showed when quoting docs indexed on Windows. Headings survive
+  // CRLF, tables do not, so this line is what keeps quoted tables rendering.
+  const normalized = content.replace(/\r\n?/g, '\n');
+  const html = DOMPurify.sanitize(marked.parse(normalized) as string, {
     ADD_ATTR: ['target', 'rel'],
   });
   MD_CACHE.set(content, html);

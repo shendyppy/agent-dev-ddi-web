@@ -4,29 +4,31 @@ import Chat from '../components/Chat.tsx';
 ---
 
 <Layout>
-  {/*
+  {
+    /*
     client:only — the island is rendered in the browser only. DOMPurify
     (used at module top-level inside Chat.tsx) is a factory in Node SSR,
     so we skip SSR for this widget entirely. The slot children below are
     Astro's documented placeholder for client:only — shown until Preact
     hydrates, then swapped out. Mirrors the real shell (header / body /
     composer) so there's no layout shift on hydration.
-  */}
+  */
+  }
   <Chat client:only="preact">
     <div class="chat-skeleton" role="status" aria-label="Loading chat">
       <header class="chat-skeleton__bar">
-        <span class="chat-skeleton__title" />
+        <span class="chat-skeleton__title"></span>
         <span class="chat-skeleton__row">
-          <span class="chat-skeleton__chip" />
-          <span class="chat-skeleton__chip chat-skeleton__chip--lang" />
+          <span class="chat-skeleton__chip"></span>
+          <span class="chat-skeleton__chip chat-skeleton__chip--lang"></span>
         </span>
       </header>
       <main class="chat-skeleton__body">
-        <span class="chat-skeleton__bubble" />
-        <span class="chat-skeleton__bubble chat-skeleton__bubble--short" />
-        <span class="chat-skeleton__bubble" />
+        <span class="chat-skeleton__bubble"></span>
+        <span class="chat-skeleton__bubble chat-skeleton__bubble--short"></span>
+        <span class="chat-skeleton__bubble"></span>
       </main>
-      <footer class="chat-skeleton__composer" />
+      <footer class="chat-skeleton__composer"></footer>
     </div>
   </Chat>
 </Layout>
@@ -50,8 +52,16 @@ import Chat from '../components/Chat.tsx';
        not visibly change colour the moment the island hydrates. */
     background-color: var(--color-background, #edf1f6);
     background-image:
-      radial-gradient(60rem 40rem at 12% -10%, color-mix(in srgb, var(--color-primary, #7a0e15) 5%, transparent), transparent 60%),
-      radial-gradient(50rem 36rem at 92% 108%, color-mix(in srgb, var(--color-gold, #a9906e) 7%, transparent), transparent 62%);
+      radial-gradient(
+        60rem 40rem at 12% -10%,
+        color-mix(in srgb, var(--color-primary, #7a0e15) 5%, transparent),
+        transparent 60%
+      ),
+      radial-gradient(
+        50rem 36rem at 92% 108%,
+        color-mix(in srgb, var(--color-gold, #a9906e) 7%, transparent),
+        transparent 62%
+      );
     background-attachment: fixed;
     font-family: var(--font-sans, system-ui, sans-serif);
   }
@@ -66,7 +76,9 @@ import Chat from '../components/Chat.tsx';
   }
 
   @media (min-width: 640px) {
-    .chat-skeleton__bar { padding: 14px 24px; }
+    .chat-skeleton__bar {
+      padding: 14px 24px;
+    }
   }
 
   .chat-skeleton__row {
@@ -83,10 +95,19 @@ import Chat from '../components/Chat.tsx';
     animation: chat-skeleton-pulse 1.4s ease-in-out infinite;
   }
 
-  .chat-skeleton__title { width: 140px; height: 14px; }
+  .chat-skeleton__title {
+    width: 140px;
+    height: 14px;
+  }
 
-  .chat-skeleton__chip { width: 90px; height: 20px; border-radius: var(--radius-full, 9999px); }
-  .chat-skeleton__chip--lang { width: 64px; }
+  .chat-skeleton__chip {
+    width: 90px;
+    height: 20px;
+    border-radius: var(--radius-full, 9999px);
+  }
+  .chat-skeleton__chip--lang {
+    width: 64px;
+  }
 
   .chat-skeleton__body {
     flex: 1;
@@ -97,8 +118,13 @@ import Chat from '../components/Chat.tsx';
     align-items: flex-start;
   }
 
-  .chat-skeleton__bubble { width: 60%; height: 14px; }
-  .chat-skeleton__bubble--short { width: 38%; }
+  .chat-skeleton__bubble {
+    width: 60%;
+    height: 14px;
+  }
+  .chat-skeleton__bubble--short {
+    width: 38%;
+  }
 
   /* Matches the live composer: 40px controls + 8px vertical padding = 56px,
      and the same rounded-2xl the real field uses. */
@@ -109,13 +135,22 @@ import Chat from '../components/Chat.tsx';
   }
 
   @media (min-width: 640px) {
-    .chat-skeleton__body { padding: 24px; }
-    .chat-skeleton__composer { margin: 0 24px 24px; }
+    .chat-skeleton__body {
+      padding: 24px;
+    }
+    .chat-skeleton__composer {
+      margin: 0 24px 24px;
+    }
   }
 
   @keyframes chat-skeleton-pulse {
-    0%, 100% { opacity: 1; }
-    50%      { opacity: 0.55; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.55;
+    }
   }
 
   @media (prefers-reduced-motion: reduce) {

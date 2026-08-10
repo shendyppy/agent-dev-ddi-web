@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import re
 import sys
 import time
 from collections.abc import AsyncIterator
@@ -32,8 +34,15 @@ from litellm.exceptions import (
     Timeout as LLMTimeout,
 )
 
+from .relevance import _select_best_chunks, extract_chunks
 from .settings import settings
 from .token_killer import prune_to_budget
+
+# Re-exported under its private name because test_llm.py and the offline
+# renderer below both grew up with it here. The logic itself now lives in
+# agent.relevance, which agent.graph also uses to build the evidence panel
+# payload — one judgement, two consumers, no drift.
+_extract_chunks = extract_chunks
 
 litellm.set_verbose = False
 
@@ -268,267 +277,81 @@ def _first_tool_result(messages: list[dict[str, Any]]) -> str | None:
     return None
 
 
-def _extract_chunks(tool_content: str) -> tuple[list[dict[str, Any]], str | None]:
-    """Dig the SearchOutput out of whatever the MCP layer handed back.
-
-    The payload arrives as a JSON string, but the exact nesting depends on how
-    the MCP client unwrapped the tool result — it can be the SearchOutput dict
-    itself, a list of MCP content blocks, or a JSON string double-encoded
-    inside one of those. Rather than assume one shape, walk down until a dict
-    with a "chunks" key appears. Returns ([], None) if nothing matches, which
-    the caller treats as "fall back to the static fixture".
-    """
-    seen = 0
-    node: Any = tool_content
-    while seen < 5:
-        seen += 1
-        if isinstance(node, str):
-            try:
-                node = json.loads(node)
-            except (json.JSONDecodeError, ValueError):
-                return [], None
-            continue
-        if isinstance(node, list):
-            if not node:
-                return [], None
-            # MCP content blocks: [{"type": "text", "text": "<json>"}, ...]
-            first = node[0]
-            node = first.get("text", first) if isinstance(first, dict) else first
-            continue
-        if isinstance(node, dict):
-            if "chunks" in node:
-                chunks = node.get("chunks") or []
-                return (chunks if isinstance(chunks, list) else []), node.get("warning")
-            # Some clients wrap the payload one level deeper.
-            for key in ("result", "content", "output"):
-                if key in node:
-                    node = node[key]
-                    break
-            else:
-                return [], None
-            continue
-        return [], None
-    return [], None
-
-
-# ── Picking which passages to show ───────────────────────────────────
-# `search_documentation` returns a fixed `top_k` regardless of quality, so the
-# tail of its list is usually a chunk that merely shares a word with the
-# question. Printing it all makes the answer look thorough while burying the one
-# passage that matters.
-#
-# The obvious filter — a similarity floor — does NOT work on this corpus, and it
-# is worth recording why. Scores are `1 - chroma_distance` (see
-# search_docs/handler.py), and the embedding model is `bge-small-en` against a
-# largely Indonesian corpus. Measured against the real index, top-1 score:
-#
-#     0.501  "gimana cara menjalankan proyek ini di lokal?"     (on topic)
-#     0.469  "gimana cara deploy ke staging?"                   (on topic)
-#     0.514  "resep rendang padang yang enak untuk lebaran"     (OFF topic)
-#     0.525  "siapa presiden pertama republik indonesia"        (OFF topic)
-#
-# Off-topic Indonesian outscores on-topic Indonesian, so no threshold separates
-# them — an English-only model reads all Indonesian text as roughly equidistant.
-# Keyword overlap does separate them cleanly on the same queries (on topic 3-10,
-# off topic 0-1), so THAT is the gate, and the score is demoted to a tiebreak
-# plus a floor that catches outright garbage (the English control question
-# "airspeed velocity of an unladen swallow" tops out at 0.173).
-#
-# The real fix is a multilingual embedding model at indexing time, which is an
-# ADR-sized change to indexing.py and out of scope here. Until then this keeps
-# the offline answer honest rather than confidently wrong.
-_MAX_ANSWER_CHUNKS = 3
-_MIN_RELEVANCE_SCORE = 0.25
-_RELEVANCE_GAP = 0.10
-# Overlap a passage must reach to be shown at all. Two, because a hit in the
-# heading counts double: one heading word is enough, or two body words. Measured
-# on-topic questions clear this by a wide margin (3-10).
-_MIN_KEYWORD_OVERLAP = 2
-
-# Words that say nothing about topic. Two groups, both earned by measurement
-# against the real index:
-#
-# 1. Grammar — what an Indonesian question spends words on regardless of subject.
-# 2. How-to framing — `cara`, `bikin`, `buat`, `jelaskan`… These wrecked the
-#    filter: nearly every heading in this corpus is phrased "Cara Menjalankan",
-#    "Cara Membaca", "Cara Kerja", so `cara` matched everything and "gimana cara
-#    bikin kopi susu yang enak" came back with a documentation page. A term that
-#    appears in most documents carries no information about which one to pick.
-_STOPWORDS = frozenset(
-    {
-        # grammar
-        "yang",
-        "untuk",
-        "dengan",
-        "dari",
-        "pada",
-        "adalah",
-        "atau",
-        "juga",
-        "dan",
-        "nya",
-        "ada",
-        "jadi",
-        "agar",
-        "oleh",
-        "akan",
-        "saat",
-        "kah",
-        "ini",
-        "itu",
-        "aku",
-        "saya",
-        "kita",
-        "kami",
-        "anda",
-        # question framing
-        "gimana",
-        "bagaimana",
-        "kalau",
-        "apakah",
-        "saja",
-        "bisa",
-        "harus",
-        "mana",
-        "kenapa",
-        "apa",
-        "siapa",
-        "berapa",
-        "kapan",
-        "tolong",
-        "jelaskan",
-        "tentang",
-        "punya",
-        "dipakai",
-        "digunakan",
-        # how-to framing — see note above
-        "cara",
-        "caranya",
-        "bikin",
-        "buat",
-        "buatkan",
-        "membuat",
-        "cari",
-    }
-)
-
-# Minimum length of a token that can carry topic. Three, not four: `tep`, `cms`,
-# `api`, `sso` are the product names and acronyms that matter most here, and a
-# four-character floor silently dropped every one of them — "teknologi apa yang
-# dipakai di TEP CMS?" scored 0.662 (the highest of any question measured) and
-# still came back empty, because `tep` and `cms` were thrown away before the
-# match. Two-character tokens stay out: `ke`, `di`, `ya` are pure grammar.
-_MIN_WORD_LENGTH = 3
-
-
-def _tokens(text: str) -> set[str]:
-    """Lowercased alphanumeric tokens. Same treatment for question and passage."""
-    return set("".join(c.lower() if c.isalnum() else " " for c in text).split())
-
-
-def _question_words(question: str) -> set[str]:
-    """Content words of the question — what :func:`_keyword_overlap` matches on."""
-    return {w for w in _tokens(question) if len(w) >= _MIN_WORD_LENGTH and w not in _STOPWORDS}
-
-
-def _matches(words: set[str], text: str) -> int:
-    """Count question words that start a token in ``text``.
-
-    Prefix-of-token rather than substring-of-text, and both halves matter.
-    *Token* is what makes short words safe: as a bare substring `tep` also hits
-    "step" and `api` hits "aplikasi", which is how an acronym filter turns into
-    a random-match generator. *Prefix* is free stemming in the direction that
-    actually occurs — `role` hits "roles", `lokal` hits "lokalisasi" — without
-    the cost of a real stemmer.
-    """
-    tokens = _tokens(text)
-    return sum(1 for word in words if any(token.startswith(word) for token in tokens))
-
-
-def _keyword_overlap(chunk: dict[str, Any], words: set[str]) -> int:
-    """How strongly this passage uses the question's own words.
-
-    A hit in ``heading_path`` counts double. That path is the curated topic
-    label a human wrote for the section, so a chunk *titled* "Menjalankan di
-    lokal" is about running things locally, while a table of contents that
-    merely lists the phrase in one of its cells is not. Against the real index
-    those two chunks scored 0.49 and 0.50 and tied on body words — the heading
-    weight is the whole reason the answer wins.
-    """
-    metadata = chunk.get("metadata") or {}
-    heading = str(metadata.get("heading_path") or metadata.get("title") or "")
-    body = str(chunk.get("text") or "")
-    return 2 * _matches(words, heading) + _matches(words, body)
-
-
-def _select_best_chunks(chunks: list[dict[str, Any]], question: str = "") -> list[dict[str, Any]]:
-    """Narrow retrieval output to the passages actually worth showing.
-
-    Keyword overlap is the gate and the ranking; the score is a floor and a
-    tiebreak. See the block comment above for the measurements that put them in
-    that order — on this corpus the score cannot tell an off-topic question from
-    an on-topic one, and overlap can.
-
-    Returns ``[]`` when nothing clears the bar. "I did not find anything close
-    enough" is a real answer, and a better one than three paragraphs about
-    something else — which, without a model in the loop to notice, is exactly
-    what an unfiltered dump produces.
-
-    Two deliberate escape hatches:
-
-    - **No content words in the question** (a bare "apa itu ini?") → rank by
-      score alone, keeping the best match and anything within
-      :data:`_RELEVANCE_GAP`. There is nothing to overlap against, and refusing
-      to answer would be worse than a weak guess.
-    - **No numeric scores at all** → trust the retriever's own ordering and just
-      apply the cap. A future tool that does not score must not read as an
-      empty index.
-
-    The cost of the keyword gate is a question phrased entirely in synonyms
-    ("cara run aplikasi" against docs that say "menjalankan"): it gets the
-    honest "sebutkan nama produk/fiturnya" note instead of the right passage.
-    Accepted knowingly — with the model down, a wrong-but-confident answer is
-    the more expensive failure.
-    """
-    scored = [
-        (chunk, float(chunk["score"]))
-        for chunk in chunks
-        if isinstance(chunk.get("score"), (int, float)) and not isinstance(chunk.get("score"), bool)
-    ]
-    if not scored:
-        return chunks[:_MAX_ANSWER_CHUNKS]
-
-    scored.sort(key=lambda pair: pair[1], reverse=True)
-    if scored[0][1] < _MIN_RELEVANCE_SCORE:
-        return []
-
-    words = _question_words(question)
-    if not words:
-        floor = max(_MIN_RELEVANCE_SCORE, scored[0][1] - _RELEVANCE_GAP)
-        return [chunk for chunk, score in scored if score >= floor][:_MAX_ANSWER_CHUNKS]
-
-    # One heading word is enough, or two body words — but a single-word question
-    # can only ever reach 1 when its word sits in the body, so the bar cannot
-    # exceed what the question is able to score.
-    bar = min(_MIN_KEYWORD_OVERLAP, len(words))
-    ranked = [
-        (chunk, _keyword_overlap(chunk, words), score)
-        for chunk, score in scored
-        if score >= _MIN_RELEVANCE_SCORE
-    ]
-    ranked = [entry for entry in ranked if entry[1] >= bar]
-    ranked.sort(key=lambda entry: (entry[1], entry[2]), reverse=True)
-    return [chunk for chunk, _, _ in ranked][:_MAX_ANSWER_CHUNKS]
-
-
 # Opening line of every offline answer. It says three things the user needs and
 # cannot infer: the model is not in the loop, the text below is verbatim
-# documentation rather than a paraphrase, and this is temporary.
+# documentation rather than a paraphrase, and this is temporary. Phrased for a
+# teammate, not an operator — "kuota atau kapasitas penuh" and other
+# infrastructure vocabulary stays out of the transcript.
 _OFFLINE_NOTE = (
-    "> Model sedang tidak bisa dihubungi (kuota atau kapasitas penuh), jadi "
-    "bagian di bawah ini dikutip apa adanya dari dokumentasi kita — belum "
-    "diringkas ulang. Coba tanya lagi beberapa saat lagi untuk jawaban penuh."
+    "> **Mode offline** — Model sedang tidak bisa dihubungi, jadi untuk "
+    "sementara jawaban ini diambil langsung dari dokumentasi kita dan dikutip "
+    "apa adanya. Coba tanya lagi beberapa saat lagi ya untuk jawaban yang "
+    "sudah dirangkum."
 )
+
+
+_EXCERPT_BUDGET = 700
+
+
+def _strip_leading_heading(text: str) -> str:
+    """Drop a chunk's own leading markdown heading line(s).
+
+    The index splits documents ON their headings, so a chunk's first line is
+    usually the same title we already print via ``heading_path`` — leaving it
+    in rendered the title twice, once as our ``###`` and once as the doc's own
+    ``##`` (bigger than ours, so the hierarchy even looked inverted).
+    """
+    lines = text.lstrip().split("\n")
+    while lines and lines[0].lstrip().startswith("#"):
+        lines.pop(0)
+        while lines and not lines[0].strip():
+            lines.pop(0)
+    return "\n".join(lines)
+
+
+def _close_open_fence(text: str) -> str:
+    """Append a closing ``` when ``text`` ends inside a fenced code block.
+
+    An unclosed fence is the worst markdown breakage this renderer can emit:
+    everything AFTER it — our own ``###`` section headings, tables, the lot —
+    is swallowed into one giant code block, and the transcript shows raw
+    markdown in a monospace box. It happens two ways: :func:`_excerpt` cuts a
+    chunk before its fence closes, or the indexer split the source document
+    mid-fence so the chunk arrives already unbalanced. Both end here.
+    """
+    if len(re.findall(r"(?m)^ {0,3}```", text)) % 2 == 1:
+        return text + "\n```"
+    return text
+
+
+def _excerpt(text: str, budget: int = _EXCERPT_BUDGET) -> str:
+    """Shorten a chunk so that what remains is still VALID markdown.
+
+    Chunks are markdown themselves — headings, GFM tables, numbered lists,
+    fenced code blocks. The old hard cut at ``budget`` characters is what made
+    offline answers look broken in the transcript: chop a table mid-row and
+    the unbalanced pipes stop parsing as a table at all, so the user sees raw
+    ``|`` soup.
+
+    Boundary preference: paragraph, then line, then word. The line boundary
+    is the load-bearing one — cutting a table between rows just drops rows,
+    which still renders as a (shorter) table. Whatever survives the cut is
+    passed through :func:`_close_open_fence`, because a cut that lands inside
+    a ``` block would otherwise turn the entire rest of the answer into code.
+    """
+    if len(text) <= budget:
+        return _close_open_fence(text)
+    cut = text.rfind("\n\n", 0, budget)
+    if cut <= 0:
+        cut = text.rfind("\n", 0, budget)
+    if cut <= 0:
+        cut = text.rfind(" ", 0, budget)
+    if cut <= 0:
+        cut = budget
+    # The ellipsis gets its own paragraph OUTSIDE any reopened fence, so it
+    # reads as "the doc continues" rather than gluing itself onto whatever
+    # block happened to be last.
+    return _close_open_fence(text[:cut].rstrip()) + "\n\n…"
 
 
 def _render_retrieved_answer(
@@ -542,40 +365,50 @@ def _render_retrieved_answer(
     ``Sources:`` block the FE's CitationList can parse) so a degraded turn
     still reads as an answer instead of a debug dump.
 
+    Pipeline internals stay OUT of the prose on purpose:
+
+    - No similarity scores. They mean nothing to the reader, and ours are
+      structurally unreliable anyway — the embedding model is English while
+      the corpus is Indonesian, so the numbers cannot separate on-topic from
+      off-topic and printing them just invites wrong conclusions.
+    - No raw path under each heading. The ``Sources:`` block at the end
+      already carries every path, and the FE renders those as citation chips;
+      repeating them inline made the answer read like a debug dump.
+
     ``chunks`` is expected to be pre-filtered by :func:`_select_best_chunks`;
     this function renders whatever it is handed, in the order given.
     """
     lines: list[str] = [_OFFLINE_NOTE, ""]
 
     if question:
-        lines.append(f"**Bagian dokumentasi yang paling dekat dengan “{question}”:**")
+        lines.append(f"Ini bagian dokumentasi yang paling relevan dengan “{question}”:")
         lines.append("")
 
     numbered = len(chunks) > 1
     sources: list[str] = []
     for i, chunk in enumerate(chunks, start=1):
-        text = str(chunk.get("text", "")).strip()
+        # Normalize Windows line endings: the corpus is indexed on Windows, so
+        # chunk text can carry \r\n. Left alone it breaks twice — _excerpt's
+        # paragraph-boundary search looks for "\n\n" and never finds one, and
+        # the FE's markdown parser drops CRLF tables to raw per-row paragraphs.
+        text = str(chunk.get("text", "")).replace("\r\n", "\n").replace("\r", "\n").strip()
         source = str(chunk.get("source", "unknown"))
-        score = chunk.get("score")
         metadata = chunk.get("metadata") or {}
         heading = metadata.get("heading_path") or metadata.get("title") or source
 
-        score_note = f" · relevansi {float(score):.2f}" if isinstance(score, (int, float)) else ""
         lines.append(f"### {f'{i}. ' if numbered else ''}{heading}")
-        lines.append(f"`{source}`{score_note}")
         lines.append("")
         # Excerpt rather than the whole chunk: a chunk can be a few thousand
         # characters, and past the first paragraph or two it stops answering
         # the question and starts being the rest of the page.
-        excerpt = text if len(text) <= 700 else text[:700].rstrip() + "…"
-        lines.append(excerpt)
+        lines.append(_excerpt(_strip_leading_heading(text)))
         lines.append("")
 
         if source not in sources:
             sources.append(source)
 
     if warning:
-        lines.append(f"> **Catatan retrieval:** {warning}")
+        lines.append(f"> **Catatan:** {warning}")
         lines.append("")
 
     if sources:
@@ -592,20 +425,20 @@ def _render_nothing_relevant(question: str, warning: str | None) -> str:
     markdown showcase for UI work, and serving it to a real user as an answer
     would be a lie dressed up as thoroughness.
     """
-    asked = f" dengan **{question}**" if question else ""
+    asked = f" dengan “{question}”" if question else ""
     lines = [
         "### Belum bisa dijawab sekarang",
         "",
-        "Model sedang tidak bisa dihubungi (kuota atau kapasitas penuh), dan "
-        f"pencarian di dokumentasi lokal tidak menemukan bagian yang cukup dekat{asked}.",
+        "Model sedang tidak bisa dihubungi, dan aku juga belum menemukan bagian "
+        f"dokumentasi yang cukup dekat{asked}.",
         "",
-        "Yang bisa dicoba:",
+        "Yang bisa kamu coba:",
         "",
-        "- Tanyakan lagi beberapa saat lagi — akses ke model biasanya pulih sendiri.",
-        "- Sebut nama produk atau fiturnya secara spesifik supaya pencariannya lebih tajam.",
+        "- Tanya lagi beberapa saat lagi — biasanya akses ke model pulih sendiri.",
+        "- Sebutkan nama produk atau fiturnya biar pencariannya lebih tajam.",
     ]
     if warning:
-        lines += ["", f"> **Catatan retrieval:** {warning}"]
+        lines += ["", f"> **Catatan:** {warning}"]
     return "\n".join(lines)
 
 
@@ -676,9 +509,21 @@ async def _fake_completion(messages: list[dict[str, Any]]) -> _FakeResponse:
             f"({len(chunks)} chunk(s), {warning or 'no warning'})",
             file=sys.stderr,
         )
+        # The fixture is for ONE situation: forced dev mode on a machine whose
+        # index is missing or empty, where the point is markdown rendering and
+        # there is nothing real to render. Gating it on `llm_fake_mode` alone was
+        # too broad — with a real index present, an off-topic question served the
+        # fixture, so the transcript showed a confident markdown showcase sitting
+        # directly above an evidence panel reporting "nothing matched". Two parts
+        # of the same turn contradicting each other is worse than either failure
+        # on its own.
+        #
+        # Retrieval having returned chunks is what distinguishes the two: it
+        # means the index is there and simply had nothing close enough, which is
+        # a real answer and deserves the honest note in both modes.
         content = (
             _read_fixture()
-            if settings.llm_fake_mode
+            if settings.llm_fake_mode and not chunks
             else _render_nothing_relevant(question, warning)
         )
         return _FakeResponse(choices=[_FakeChoice(message=_FakeMessage(content=content))])
@@ -687,7 +532,82 @@ async def _fake_completion(messages: list[dict[str, Any]]) -> _FakeResponse:
     return _FakeResponse(choices=[_FakeChoice(message=_FakeMessage(content=answer))])
 
 
-@observe(as_type="generation")
+# ── Credential resolution ────────────────────────────────────────────
+# Per ADR 0010. Until now nothing in this codebase passed an api_key to
+# LiteLLM at all: `settings.py` declared three `*_api_key` fields that were
+# never read, and authentication happened only because `import litellm` calls
+# `load_dotenv()`, which finds the repo-root `.env` and loads the WHOLE file
+# into os.environ. That worked, but it is invisible at the call site, it drags
+# unrelated secrets (Supabase service-role key included) into the process
+# environment, and it cannot express a per-request credential at all — which is
+# exactly what bring-your-own-key needs.
+
+
+def _provider_of(model: str) -> str | None:
+    """LiteLLM's provider name for a model string, or None if it cannot tell.
+
+    ``get_llm_provider`` is the same resolution LiteLLM uses internally to pick
+    a transport, so asking it keeps our env-var naming in step with whatever the
+    library expects. Verified against gemini, anthropic, deepseek, dashscope
+    (Qwen) and openrouter.
+
+    Never raises: an unrecognised model must fall through to the generic key
+    rather than break the call before it is even attempted.
+    """
+    try:
+        _, provider, _, _ = litellm.get_llm_provider(model=model)
+        return str(provider) if provider else None
+    except Exception:  # noqa: BLE001 — a bad model id is the provider's error to report
+        return None
+
+
+def resolve_api_key(model: str, user_key: str | None = None) -> str | None:
+    """Pick the credential for one call. See ADR 0010 for the ordering.
+
+    1. ``user_key`` — supplied per request by the browser (BYOK).
+    2. ``<PROVIDER>_API_KEY`` — e.g. ``GEMINI_API_KEY``, ``DEEPSEEK_API_KEY``.
+       Keeps several providers credentialed at once, which is what makes a
+       runtime model picker possible.
+    3. ``MODEL_API_KEY`` — generic fallback, so swapping provider is two lines
+       in ``.env`` with no vendor-specific variable name to remember.
+    4. ``None`` — pass nothing and let LiteLLM do its own env lookup.
+
+    Layer 4 is what makes this change backwards compatible: with no key
+    configured anywhere the caller behaves exactly as it did before.
+
+    Layers 2-4 are NOT optional niceties. Evals and CI run headless with no user
+    to paste anything, so a user-key-only design would break ``just eval``.
+    """
+    if user_key and user_key.strip():
+        return user_key.strip()
+
+    provider = _provider_of(model)
+    if provider:
+        # os.environ, not settings: the set of provider variables is open-ended
+        # (LiteLLM ships 141 providers) and enumerating them as Settings fields
+        # is what produced the three dead fields this ADR removes.
+        from_provider = os.environ.get(f"{provider.upper()}_API_KEY")
+        if from_provider:
+            return from_provider
+
+    return settings.model_api_key or None
+
+
+# capture_input/capture_output are OFF, and that is a security control, not a
+# tuning knob.
+#
+# `@observe` captures the decorated function's arguments by default — the flag
+# resolves from LANGFUSE_OBSERVE_DECORATOR_IO_CAPTURE_ENABLED, which defaults to
+# "True", and _get_input_from_func_args serialises **kwargs wholesale. Since
+# `api_key` is a kwarg here, every BYOK call on a Langfuse-enabled deployment
+# would have written the user's credential into a trace, where it persists
+# outside this process. That is the exact leak ADR 0010 exists to close, and it
+# was invisible: the first test only asserted on update_current_generation,
+# which is the OTHER way input reaches a trace.
+#
+# Nothing is lost by turning it off — the two calls below set `input` and
+# `output` explicitly and deliberately, with the credential excluded.
+@observe(as_type="generation", capture_input=False, capture_output=False)
 async def acompletion(
     messages: list[dict[str, Any]],
     *,
@@ -695,19 +615,33 @@ async def acompletion(
     model: str | None = None,
     stream: bool = False,
     max_input_tokens: int | None = None,
+    api_key: str | None = None,
+    offline: bool = False,
     **kwargs: Any,
 ) -> Any:
     """Async LLM call. Returns the LiteLLM response (or async iterator if stream=True).
 
     If `max_input_tokens` is set, the message list is pruned via token_killer
     before the call so the request fits within the budget.
+
+    `api_key` is the caller's per-request credential (BYOK). It is resolved
+    through :func:`resolve_api_key`, passed to the provider, and never logged,
+    traced or stored — see ADR 0010.
+
+    `offline` skips the provider for THIS call only. It is the per-request twin
+    of ``settings.llm_fake_mode``, and the distinction matters: the setting is
+    process-global, so exposing it as a UI toggle would let one person switch
+    the model off for everyone sharing the deployment. Per-request, one user's
+    choice affects only their own turns. The env var stays as the process-wide
+    default because evals and CI need exactly that.
     """
     model = model or settings.litellm_model
 
     # Checked before anything else — pruning, tracing and retry policy all
-    # describe a provider call that is not going to happen. Either the dev
-    # forced offline mode, or a recent capacity failure opened the window.
-    if settings.llm_fake_mode or fallback_active():
+    # describe a provider call that is not going to happen. Either this caller
+    # asked to stay offline, the deployment forced it, or a recent capacity
+    # failure opened the window.
+    if offline or settings.llm_fake_mode or fallback_active():
         if stream:
             raise NotImplementedError(
                 "Offline mode does not support stream=True. Nothing in the chat "
@@ -728,7 +662,15 @@ async def acompletion(
             # 500 would be worse than briefly overspending.
             print(f"[llm] token budget not enforceable: {exc}", file=sys.stderr)
 
+    # Resolved after the offline check: an offline turn makes no provider call,
+    # so there is no credential to pick and nothing to leak.
+    resolved_key = resolve_api_key(model, api_key)
+
     langfuse = get_client()
+    # `model` and `messages` only — never the credential. Langfuse persists what
+    # it is given, so a key that reaches a trace is a key written to durable
+    # storage outside this process. ADR 0010 lists this as one of three leak
+    # paths; test_llm.py asserts it stays closed.
     langfuse.update_current_generation(model=model, input=messages)
 
     # Retry transient provider errors (503/per-minute 429/5xx/network) with
@@ -752,6 +694,13 @@ async def acompletion(
                     messages=messages,
                     tools=tools,
                     stream=stream,
+                    # Omitted entirely when unresolved, rather than passed as
+                    # None: an explicit api_key=None on some providers short
+                    # circuits LiteLLM's own env lookup instead of deferring to
+                    # it, which would break the pre-ADR-0010 behaviour this
+                    # layer promises to preserve.
+                    **({"api_key": resolved_key} if resolved_key else {}),
+                    **({"api_base": settings.model_api_base} if settings.model_api_base else {}),
                     **kwargs,
                 )
     except Exception as exc:
@@ -775,6 +724,7 @@ async def astream(
     tools: list[dict[str, Any]] | None = None,
     model: str | None = None,
     max_input_tokens: int | None = None,
+    api_key: str | None = None,
     **kwargs: Any,
 ) -> AsyncIterator[Any]:
     """Convenience wrapper for streaming responses."""
@@ -784,6 +734,7 @@ async def astream(
         model=model,
         stream=True,
         max_input_tokens=max_input_tokens,
+        api_key=api_key,
         **kwargs,
     )
     async for chunk in response:

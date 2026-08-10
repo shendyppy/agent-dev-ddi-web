@@ -30,7 +30,7 @@ Why: without evals, RAG quality regresses silently. We have no other way to know
 
 ### 3. Skills are MCP servers, not inline Python functions
 
-A new tool/skill goes into [`apps/backend/mcp_servers/<name>/`](apps/backend/mcp_servers/), exposing the MCP protocol. The orchestrator connects via an MCP client. **Do not** define skills as LangGraph `@tool` decorators directly on the graph.
+A new tool/skill goes into [`apps/backend/src/mcp_servers/<name>/`](apps/backend/src/mcp_servers/), exposing the MCP protocol. The orchestrator connects via an MCP client. **Do not** define skills as LangGraph `@tool` decorators directly on the graph.
 
 Why: MCP makes skills reusable from Claude Desktop, Cursor, and other clients. It also forces a clean interface boundary.
 
@@ -64,7 +64,7 @@ Why: future-you (and future-AI) needs to know *why*, not just *what*.
 | List of products we document | [`docs/product-catalog.md`](docs/product-catalog.md) |
 | Main agent loop | [`apps/backend/src/agent/graph.py`](apps/backend/src/agent/graph.py) |
 | LLM client (always go through this) | [`apps/backend/src/agent/llm.py`](apps/backend/src/agent/llm.py) |
-| Existing skills | [`apps/backend/mcp_servers/`](apps/backend/mcp_servers/) |
+| Existing skills | [`apps/backend/src/mcp_servers/`](apps/backend/src/mcp_servers/) |
 | Existing prompts | [`prompts/`](prompts/) |
 | Eval cases | [`evals/cases/`](evals/cases/) |
 | Frontend chat UI | [`apps/frontend/src/components/Chat.tsx`](apps/frontend/src/components/) |
@@ -78,8 +78,8 @@ Each major folder has its own `AGENTS.md` with folder-specific conventions. Read
 
 ### Adding a new skill (most common task)
 
-1. Read [`apps/backend/mcp_servers/AGENTS.md`](apps/backend/mcp_servers/AGENTS.md).
-2. `cp -r apps/backend/mcp_servers/_template apps/backend/mcp_servers/<skill_name>`
+1. Read [`apps/backend/src/mcp_servers/AGENTS.md`](apps/backend/src/mcp_servers/AGENTS.md).
+2. `cp -r apps/backend/src/mcp_servers/_template apps/backend/src/mcp_servers/<skill_name>`
 3. Edit `skill.md` — describe what the skill does, when the LLM should call it, input/output examples. **This file is parsed to generate the MCP tool spec.**
 4. Implement `server.py`.
 5. Register the server in `apps/backend/src/agent/mcp_clients.py`.

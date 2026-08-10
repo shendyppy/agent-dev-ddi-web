@@ -3,6 +3,18 @@
 - **Status**: Accepted
 - **Date**: 2026-05-25
 
+> **Runtime default changed, 2026-08-07.** The default is now
+> `gemini/gemini-3.6-flash` (`settings.litellm_model`, `.env.example`), not
+> `claude-sonnet-4-6`. The title and the "Why Claude as default" section below
+> are left as written — they record what was decided on 2026-05-25.
+>
+> The swap needed no code change, which is the decision in this ADR working as
+> intended rather than being reversed: the gateway and the "nothing imports a
+> provider SDK directly" rule both still hold. What the swap *did* surface is a
+> constraint this ADR did not anticipate — the free Gemini tier caps at ~20
+> requests/day/model, which is why `agent/llm.py` grew quota classification and
+> an offline fallback window. That mechanism is still undocumented by any ADR.
+
 ## Context
 
 The agent calls an LLM for reasoning + response generation. We want to:

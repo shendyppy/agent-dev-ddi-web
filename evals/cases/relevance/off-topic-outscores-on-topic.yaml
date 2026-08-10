@@ -1,0 +1,62 @@
+name: off-topic-outscores-on-topic
+tags: [prompt:main-agent, skill:search_documentation, feature:relevance-gate]
+description: |
+  Locks in the measurement that shaped agent/relevance.py.
+
+  The index is built with `BAAI/bge-small-en-v1.5` while docs/knowledge-base/
+  is almost entirely Indonesian, so similarity scores carry almost no signal
+  about topic. Measured against the real index on 2026-07-28, top-1 score:
+
+      0.501  "gimana cara menjalankan proyek ini di lokal?"     (on topic)
+      0.514  "resep rendang padang yang enak untuk lebaran"     (OFF topic)
+      0.525  "siapa presiden pertama republik indonesia"        (OFF topic)
+
+  The off-topic questions score HIGHER than the on-topic one. That is why no
+  similarity threshold can gate this corpus and why relevance.py gates on
+  keyword overlap instead (on topic 3-10, off topic 0-1), demoting the score to
+  a tiebreak plus a floor for outright garbage.
+
+  This case sends the rendang question. Retrieval will come back with
+  respectable-looking scores — that is the whole point — and the agent must
+  still decline rather than dress up whatever chunk ranked first. It is the
+  regression that would fire if someone "simplified" the gate back to a score
+  threshold, or widened the stopword list until `resep` started matching.
+
+  NOTE ON --fast: must_contain_any and must_not_contain are model-dependent and
+  are SKIPPED under LLM_FAKE_MODE (see checks.MODEL_DEPENDENT_CHECKS), because
+  the offline path serves a static fixture when nothing clears the bar. A green
+  fast run does not exercise this case; run it without --fast to mean it.
+
+input:
+  messages:
+    - role: user
+      content: "resep rendang padang yang enak untuk lebaran"
+
+expected:
+  # Not asserted: whether the agent searched at all. Either behaviour is
+  # defensible here — recognising the question as off-topic without a lookup is
+  # fine, and so is searching and finding nothing worth using.
+  must_contain_any:
+    - "tidak"
+    - "nggak"
+    - "dokumentasi"
+    - "documentation"
+  must_not_contain:
+    # Answering the question from general knowledge. The agent is a docs
+    # assistant; a recipe is out of scope no matter how confidently it could
+    # produce one.
+    - "santan"
+    - "serai"
+    - "lengkuas"
+    - "bumbu"
+    # Pretending a retrieved chunk was on topic. These are real section titles
+    # that off-topic Indonesian queries surface at ~0.5, so citing one here
+    # means the score gate was trusted over the overlap gate.
+    - "Manajemen Assessment"
+    - "Peta Route"
+
+  rubric:
+    - "The answer makes clear the question is outside what this documentation covers, rather than answering it."
+    - "It does not present any retrieved documentation section as if it were relevant to a rendang recipe."
+    - "It does not supply a rendang recipe from general knowledge."
+    - "The tone stays helpful — it points the user at what the assistant CAN answer instead of only refusing."

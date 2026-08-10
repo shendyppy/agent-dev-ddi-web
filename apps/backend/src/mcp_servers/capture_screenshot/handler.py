@@ -43,9 +43,7 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 # NOTE: set via the OS environment, not .env — the .env file is not propagated
 # to the MCP subprocess, so a .env-only value would reach the backend but not
 # here, causing a serve/write mismatch.
-SCREENSHOT_DIR = Path(
-    os.environ.get("SCREENSHOT_DIR") or str(REPO_ROOT / ".data" / "screenshots")
-)
+SCREENSHOT_DIR = Path(os.environ.get("SCREENSHOT_DIR") or str(REPO_ROOT / ".data" / "screenshots"))
 SCREENSHOT_BASE_URL = os.environ.get("SCREENSHOT_BASE_URL", "http://localhost:8000")
 
 
@@ -135,8 +133,7 @@ async def handle(payload: ScreenshotInput) -> ScreenshotOutput | dict[str, str]:
             if code != 0 or not target.exists():
                 return {
                     "error": (
-                        f"capture failed for scenario {scenario!r}"
-                        f" (exit {code}): {text[-500:]}"
+                        f"capture failed for scenario {scenario!r} (exit {code}): {text[-500:]}"
                     ),
                     "code": "capture_failed",
                 }

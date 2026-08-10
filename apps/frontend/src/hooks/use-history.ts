@@ -16,7 +16,9 @@ export function useHistory(user: User | null) {
   const [loading, setLoading] = useState(false);
 
   const refresh = useCallback(async () => {
-    if (!user) {
+    // `!supabase` and `!user` land in the same place on purpose: with no client
+    // there is no history, which is exactly what being signed out looks like.
+    if (!supabase || !user) {
       setSessions([]);
       return;
     }
@@ -47,6 +49,7 @@ export function useHistory(user: User | null) {
   }, [refresh]);
 
   async function loadMessages(sessionId: string): Promise<Message[]> {
+    if (!supabase) return [];
     const { data } = await supabase
       .from('chat_messages')
       .select('role, content')

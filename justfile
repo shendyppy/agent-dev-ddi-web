@@ -53,13 +53,16 @@ reindex:
 
 # ─── Evals ────────────────────────────────────────────────────────────────────
 
-# Run the full eval suite
+# Run the full eval suite.
+# Runs from the repo root — `evals/` lives here, not under apps/backend — with
+# the backend's `src` on PYTHONPATH so `agent.*` imports resolve. `uv run
+# --project` picks the backend venv without changing cwd.
 eval *args:
-    cd apps/backend; uv run python -m evals.run {{args}}
+    $env:PYTHONPATH="{{justfile_directory()}}/apps/backend/src"; uv run --project apps/backend python -m evals.run {{args}}
 
 # Run evals in fast mode (cached LLM responses where possible)
-eval-fast:
-    cd apps/backend; uv run python -m evals.run --fast
+eval-fast *args:
+    just eval --fast {{args}}
 
 # ─── MCP servers ──────────────────────────────────────────────────────────────
 
@@ -93,10 +96,17 @@ screenshot-url url slug:
 
 # ─── Quality ──────────────────────────────────────────────────────────────────
 
-test: test-be test-fe test-e2e
+test: test-be test-evals test-fe test-e2e
 
 test-be:
     cd apps/backend; uv run pytest
+
+# Unit tests for the eval suite's own assertion logic. Separate from test-be
+# because `evals/` lives at the repo root, outside the backend's testpaths —
+# and a broken assertion is invisible (it looks exactly like a passing one),
+# so it needs tests of its own.
+test-evals:
+    $env:PYTHONPATH="{{justfile_directory()}}/apps/backend/src;{{justfile_directory()}}"; uv run --project apps/backend python -m pytest evals -q
 
 test-fe:
     cd apps/frontend; pnpm test
@@ -108,6 +118,12 @@ lint:
 fmt:
     cd apps/backend; uv run ruff format .
     cd apps/frontend; pnpm fmt
+
+# Same checks as `fmt` but read-only — for CI, which must fail on drift
+# rather than silently rewriting the checkout.
+fmt-check:
+    cd apps/backend; uv run ruff format --check .
+    cd apps/frontend; pnpm fmt:check
 
 # ─── Observability ────────────────────────────────────────────────────────────
 

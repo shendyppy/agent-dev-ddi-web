@@ -99,12 +99,8 @@ class MCPServerConfig:
 SERVERS: list[MCPServerConfig] = [
     MCPServerConfig(name="search_docs", module="mcp_servers.search_docs.server"),
     MCPServerConfig(name="list_products", module="mcp_servers.list_products.server"),
-    MCPServerConfig(
-        name="capture_screenshot", module="mcp_servers.capture_screenshot.server"
-    ),
-    MCPServerConfig(
-        name="check_app_health", module="mcp_servers.check_app_health.server"
-    ),
+    MCPServerConfig(name="capture_screenshot", module="mcp_servers.capture_screenshot.server"),
+    MCPServerConfig(name="check_app_health", module="mcp_servers.check_app_health.server"),
 ]
 
 
@@ -121,8 +117,8 @@ def _server_params(config: MCPServerConfig) -> StdioServerParameters:
     """
     env = os.environ.copy()
     existing_pythonpath = env.get("PYTHONPATH", "")
-    env["PYTHONPATH"] = (
-        str(SRC_DIR) + (os.pathsep + existing_pythonpath if existing_pythonpath else "")
+    env["PYTHONPATH"] = str(SRC_DIR) + (
+        os.pathsep + existing_pythonpath if existing_pythonpath else ""
     )
     env.update(config.env)
     return StdioServerParameters(
@@ -225,9 +221,7 @@ async def call_tool(name: str, arguments: dict[str, Any]) -> Any:
 
     server_name = _tool_owner.get(name)
     if server_name is None:
-        raise KeyError(
-            f"tool {name!r} is not registered — available: {sorted(_tool_owner)}"
-        )
+        raise KeyError(f"tool {name!r} is not registered — available: {sorted(_tool_owner)}")
 
     config = next(s for s in SERVERS if s.name == server_name)
     async with stdio_client(_server_params(config)) as (read, write):

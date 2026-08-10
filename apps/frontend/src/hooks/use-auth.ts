@@ -14,6 +14,13 @@ export function useAuth(): AuthState {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // No Supabase configured: settle immediately as signed-out. Leaving
+    // `loading` true would hang the header on a state that can never resolve.
+    if (!supabase) {
+      setLoading(false);
+      return;
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       setUser(data.session?.user ?? null);
       setLoading(false);
@@ -27,6 +34,7 @@ export function useAuth(): AuthState {
   }, []);
 
   async function login() {
+    if (!supabase) return;
     await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: { redirectTo: window.location.origin },
@@ -34,6 +42,7 @@ export function useAuth(): AuthState {
   }
 
   async function logout() {
+    if (!supabase) return;
     await supabase.auth.signOut();
   }
 

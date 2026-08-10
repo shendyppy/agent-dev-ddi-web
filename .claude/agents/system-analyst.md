@@ -16,7 +16,7 @@ See [`docs/architecture.md`](../../docs/architecture.md) for the canonical overv
 - **Frontend** (`apps/frontend/`): Astro 6 SSR with Preact islands. Chat UI is `src/components/Chat.tsx`. No SPA framework.
 - **Backend** (`apps/backend/`): FastAPI + LangGraph orchestrator. Entry point is `src/agent/server.py` (not `main.py` — that is a leftover).
 - **LLM gateway**: every LLM call routes through `src/agent/llm.py` (LiteLLM + Langfuse `@observe`).
-- **Skills**: each lives in `apps/backend/mcp_servers/<name>/` as an MCP server. Registered in `src/agent/mcp_clients.py`.
+- **Skills**: each lives in `apps/backend/src/mcp_servers/<name>/` as an MCP server. Registered in `src/agent/mcp_clients.py`.
 - **RAG**: `src/agent/indexing.py` builds a ChromaDB index from `docs/`; the `search_documentation` MCP server queries it.
 - **Evals**: `evals/cases/*.yaml` + `evals/run.py`. Gate before any agent-behaviour merge.
 - **Observability**: Langfuse traces (`just trace <session_id>`).
