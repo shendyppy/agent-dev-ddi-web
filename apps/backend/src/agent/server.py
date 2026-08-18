@@ -238,7 +238,10 @@ def create_knowledge_base(request: KnowledgeBaseRequest) -> dict[str, str]:
     kb_dir = REPO_ROOT / "docs" / "knowledge-base"
     kb_dir.mkdir(parents=True, exist_ok=True)
     
-    frontmatter = f"---\nproduct_id: {request.product_id}\nproduct_name: {request.product_name}\nstatus: active\n---\n\n"
+    frontmatter = (
+        f"---\nproduct_id: {request.product_id}\n"
+        f"product_name: {request.product_name}\nstatus: active\n---\n\n"
+    )
     full_content = frontmatter + str(request.content)
     
     file_path = kb_dir / safe_name
