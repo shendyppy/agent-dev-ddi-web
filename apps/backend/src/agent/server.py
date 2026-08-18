@@ -67,6 +67,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import sys
 import traceback
 import uuid
@@ -213,7 +214,55 @@ class ChatRequest(BaseModel):
     product_id: str | None = None
 
 
-# ─── Static endpoints ────────────────────────────────────────────────────
+class KnowledgeBaseRequest(BaseModel):
+    """Body of POST /api/knowledge-base."""
+
+    filename: str
+    product_id: str
+    product_name: str
+    content: str
+
+
+@app.post("/api/knowledge-base")
+def create_knowledge_base(request: KnowledgeBaseRequest) -> dict[str, str]:
+    """Save a new knowledge base document to docs/knowledge-base."""
+    from .settings import REPO_ROOT
+    
+    # Sanitize the filename, replace spaces with hyphens, convert to lowercase
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '-', request.filename).strip('-').lower()
+    if not safe_name:
+        safe_name = "untitled"
+    if not safe_name.endswith('.md'):
+        safe_name += '.md'
+        
+    kb_dir = REPO_ROOT / "docs" / "knowledge-base"
+    kb_dir.mkdir(parents=True, exist_ok=True)
+    
+    frontmatter = f"""---
+product_id: {request.product_id}
+product_name: {request.product_name}
+status: active
+---
+
+"""
+    full_content = frontmatter + str(request.content)
+    
+    file_path = kb_dir / safe_name
+    file_path.write_text(full_content, encoding="utf-8")
+    
+    # Trigger a synchronous index rebuild
+    subprocess.run(
+        ["just", "index"],
+        cwd=REPO_ROOT,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL
+    )
+    
+    return {"status": "success", "file": safe_name}
+
+
+# ─── Chat endpoint ───────────────────────────────────────────────────────
 
 
 @app.get("/")

@@ -22,6 +22,9 @@ import { ChatHeader } from './chat/ChatHeader';
 import { MessageList } from './chat/MessageList';
 import { ChatComposer } from './chat/ChatComposer';
 import { HistoryPanel } from './chat/HistoryPanel';
+import ModalInputBaseKnowledge from './ui/ModalInputBaseKnowledge';
+import { API_BASE } from '@/lib/chat';
+import { notification } from 'antd';
 
 export default function Chat() {
   const auth = useAuth();
@@ -29,6 +32,68 @@ export default function Chat() {
   const history = useHistory(auth.user);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const showModal = () => {
+    setIsModalOpen(true);
+  };
+
+  const handleOk = async (
+    filename: string,
+    productId: string,
+    productName: string,
+    content: string,
+  ) => {
+    if (!filename || !productId || !productName || !content) {
+      notification.warning({
+        title: 'Peringatan',
+        description: 'Semua isian tidak boleh kosong!',
+      });
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const res = await fetch(`${API_BASE}/api/knowledge-base`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          filename,
+          product_id: productId,
+          product_name: productName,
+          content,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error('Gagal menyimpan knowledge base');
+      }
+
+      notification.success({
+        title: 'Berhasil',
+        description: 'Knowledge base berhasil disimpan!',
+      });
+      setIsModalOpen(false);
+
+      // 'just index' is now synchronous on the backend, so we can fetch immediately
+      chat.retryBootstrap();
+    } catch (e) {
+      console.error(e);
+      notification.error({
+        title: 'Gagal',
+        description: 'Gagal menyimpan knowledge base!',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleCancel = () => {
+    setIsModalOpen(false);
+  };
 
   return (
     // h-dvh, not h-screen: on mobile browsers the URL bar shrinks the visual
@@ -89,6 +154,7 @@ export default function Chat() {
           onApiKeyChange={chat.setApiKey}
           offlineMode={chat.offlineMode}
           onOfflineModeChange={chat.setOfflineMode}
+          showModal={showModal}
         />
 
         <MessageList
@@ -112,6 +178,13 @@ export default function Chat() {
           onChooseScope={chat.chooseScope}
           backendStatus={chat.backendStatus}
           onRetryBootstrap={chat.retryBootstrap}
+        />
+
+        <ModalInputBaseKnowledge
+          isModalOpen={isModalOpen}
+          isSaving={isSaving}
+          handleOk={handleOk}
+          handleCancel={handleCancel}
         />
 
         {/* Translucent + blurred so the transcript visibly passes *under* the
