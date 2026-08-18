@@ -239,7 +239,7 @@ def create_knowledge_base(request: KnowledgeBaseRequest) -> dict[str, str]:
     kb_dir.mkdir(parents=True, exist_ok=True)
     
     frontmatter = f"---\nproduct_id: {request.product_id}\nproduct_name: {request.product_name}\nstatus: active\n---\n\n"
-    full_content = frontmatter + request.content
+    full_content = frontmatter + str(request.content)
     
     file_path = kb_dir / safe_name
     file_path.write_text(full_content, encoding="utf-8")
