@@ -13,13 +13,19 @@ the project's JWT secret in ``.env`` at all — one fewer secret to distribute,
 rotate, and leak. It also means a revoked session stops working immediately
 instead of at token expiry.
 
-Two roles, because two is what the workflow actually has:
+Two levels, because two is what the workflow actually has:
 
-- **writer** — may submit a document. It lands in the review inbox.
-- **maintainer** — may publish a document out of the inbox into the corpus.
+- **submitting** is open to any signed-in user. Documents land in the review
+  inbox and are not searchable until published, so the cost of a bad one is a
+  file nobody reads yet. Gating it would only deter contribution.
+- **publishing** puts a document in front of every user of the agent, so it
+  needs an explicit grant — a row in the ``kb_roles`` table (see
+  ``kb_roles.py`` and ``supabase/migrations/``), or the bootstrap list in
+  ``KB_MAINTAINER_EMAILS`` for the first maintainer on an empty database.
 
-Anything finer than that would be role-modelling for its own sake on a team
-this size.
+Roles used to be two env vars. That was wrong: a list of people is data, not
+configuration, and keeping it in ``.env`` meant granting access required a
+server edit and a restart.
 """
 
 from __future__ import annotations
@@ -27,6 +33,7 @@ from __future__ import annotations
 import httpx
 from fastapi import Header, HTTPException
 
+from .kb_roles import fetch_role
 from .settings import settings
 
 # Supabase is not fast, but it is not slow either, and a save is a rare,
@@ -35,12 +42,16 @@ from .settings import settings
 AUTH_TIMEOUT_SECONDS = 10.0
 
 
-async def _resolve_email(authorization: str | None) -> str:
-    """The verified email behind a bearer token, or raise 401/503.
+async def _resolve_identity(authorization: str | None) -> tuple[str, str]:
+    """``(email, token)`` behind a bearer header, or raise 401/503.
 
-    Returns the email lowercased, because it is used for allowlist comparison
-    and for the git commit trailer — both of which should not care about the
-    casing a provider happened to hand back.
+    The token is returned alongside the email because the role lookup reuses
+    it: ``kb_roles`` grants "read your own row" to the caller, so their own
+    credential is enough and no service-role key has to exist.
+
+    Email comes back lowercased — it is used for allowlist comparison, for the
+    role lookup, and for the git commit author, none of which should care about
+    the casing a provider happened to hand back.
     """
     if not settings.supabase_url or not settings.supabase_anon_key:
         # Fail closed. An unconfigured auth backend must not silently become
@@ -94,43 +105,49 @@ async def _resolve_email(authorization: str | None) -> str:
                 "this account has no email address, so it cannot be recorded as a document owner."
             ),
         )
-    return str(email).strip().lower()
+    return str(email).strip().lower(), token
 
 
-def _is_allowed(email: str, allowlist: list[str]) -> bool:
+def _is_bootstrap_maintainer(email: str) -> bool:
     """Membership test supporting both full emails and ``@domain`` suffixes.
 
-    An empty allowlist admits everyone who got this far — and getting this far
-    already required a verified session.
+    An EMPTY list matches nobody — the opposite of the old writer allowlist,
+    and deliberately so. This is a seed for the first maintainer, not a switch
+    that turns publishing into a free-for-all when left unconfigured.
     """
-    if not allowlist:
-        return True
     return any(
         email == entry if not entry.startswith("@") else email.endswith(entry)
-        for entry in allowlist
+        for entry in settings.kb_maintainer_list
     )
 
 
 async def require_kb_writer(authorization: str | None = Header(default=None)) -> str:
-    """FastAPI dependency: verified email of someone allowed to submit docs."""
-    email = await _resolve_email(authorization)
-    if not _is_allowed(email, settings.kb_writer_list):
-        raise HTTPException(
-            status_code=403,
-            detail=f"{email} is not on KB_WRITER_EMAILS, so it cannot add documentation.",
-        )
+    """FastAPI dependency: verified email of someone allowed to submit docs.
+
+    No role required. A submission is quarantined in the review inbox and
+    cannot be answered from until a maintainer publishes it, so the gate that
+    matters is the one on publishing.
+    """
+    email, _token = await _resolve_identity(authorization)
     return email
 
 
 async def require_kb_maintainer(authorization: str | None = Header(default=None)) -> str:
     """FastAPI dependency: verified email of someone allowed to publish docs."""
-    email = await _resolve_email(authorization)
-    if not _is_allowed(email, settings.kb_maintainer_list):
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                f"{email} is not on KB_MAINTAINER_EMAILS, so it cannot publish "
-                "documents out of the review inbox."
-            ),
-        )
-    return email
+    email, token = await _resolve_identity(authorization)
+
+    # Bootstrap first, so this still works against a database where the
+    # kb_roles table does not exist yet.
+    if _is_bootstrap_maintainer(email):
+        return email
+
+    if await fetch_role(email, token) == "maintainer":
+        return email
+
+    raise HTTPException(
+        status_code=403,
+        detail=(
+            f"{email} cannot publish documents. Ask a maintainer to grant the role "
+            "(see supabase/README.md); submitting for review needs no extra access."
+        ),
+    )

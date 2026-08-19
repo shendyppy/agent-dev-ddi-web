@@ -13,7 +13,7 @@ import pytest
 from fastapi import HTTPException
 
 from . import kb_auth
-from .kb_auth import _is_allowed, require_kb_maintainer, require_kb_writer
+from .kb_auth import _is_bootstrap_maintainer, require_kb_maintainer, require_kb_writer
 
 
 class _FakeResponse:
@@ -48,8 +48,17 @@ def _fake_client(response: _FakeResponse) -> Any:
 def supabase_configured(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(kb_auth.settings, "supabase_url", "https://proj.supabase.co")
     monkeypatch.setattr(kb_auth.settings, "supabase_anon_key", "anon-key")
-    monkeypatch.setattr(kb_auth.settings, "kb_writer_emails", "")
     monkeypatch.setattr(kb_auth.settings, "kb_maintainer_emails", "")
+    # No row unless a test says otherwise, so the default path is "not a
+    # maintainer" rather than whatever the last test happened to leave behind.
+    monkeypatch.setattr(kb_auth, "fetch_role", _role_returning(None))
+
+
+def _role_returning(role: str | None):
+    async def _fetch(_email: str, _token: str) -> str | None:
+        return role
+
+    return _fetch
 
 
 class TestTokenIsRequired:
@@ -129,42 +138,48 @@ class TestVerifiedIdentity:
         assert excinfo.value.status_code == 503
 
 
-class TestAllowlist:
-    @pytest.mark.parametrize(
-        ("email", "allowlist", "expected"),
-        [
-            ("a@b.com", [], True),  # empty list = any signed-in user
-            ("a@b.com", ["a@b.com"], True),
-            ("a@b.com", ["c@d.com"], False),
-            ("a@company.com", ["@company.com"], True),
-            ("a@other.com", ["@company.com"], False),
-            ("a@b.com", ["c@d.com", "a@b.com"], True),
-        ],
-    )
-    def test_membership(self, email: str, allowlist: list[str], expected: bool) -> None:
-        assert _is_allowed(email, allowlist) is expected
-
-    async def test_writer_not_on_the_list_is_403(
+class TestSubmittingNeedsNoRole:
+    async def test_any_signed_in_user_may_submit(
         self, supabase_configured: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(kb_auth.settings, "kb_writer_emails", "someone-else@example.com")
+        """Submissions are quarantined in the review inbox, so gating them
+        would only deter contribution without protecting anything."""
         monkeypatch.setattr(
             kb_auth.httpx,
             "AsyncClient",
-            _fake_client(_FakeResponse(200, {"email": "outsider@example.com"})),
+            _fake_client(_FakeResponse(200, {"email": "siapa-saja@example.com"})),
         )
 
-        with pytest.raises(HTTPException) as excinfo:
-            await require_kb_writer(authorization="Bearer good")
+        assert await require_kb_writer(authorization="Bearer good") == "siapa-saja@example.com"
 
-        assert excinfo.value.status_code == 403
 
-    async def test_maintainer_falls_back_to_the_writer_list(
+class TestBootstrapList:
+    @pytest.mark.parametrize(
+        ("email", "seed", "expected"),
+        [
+            # Empty matches NOBODY — the opposite of the old writer allowlist.
+            # An unconfigured seed must not turn publishing into a free-for-all.
+            ("a@b.com", "", False),
+            ("a@b.com", "a@b.com", True),
+            ("a@b.com", "c@d.com", False),
+            ("a@company.com", "@company.com", True),
+            ("a@other.com", "@company.com", False),
+            ("a@b.com", "c@d.com, a@b.com", True),
+        ],
+    )
+    def test_membership(
+        self, email: str, seed: str, expected: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(kb_auth.settings, "kb_maintainer_emails", seed)
+        assert _is_bootstrap_maintainer(email) is expected
+
+    async def test_the_seed_works_before_the_roles_table_exists(
         self, supabase_configured: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """One list is enough for a small team; two only when they diverge."""
-        monkeypatch.setattr(kb_auth.settings, "kb_writer_emails", "lead@example.com")
-        monkeypatch.setattr(kb_auth.settings, "kb_maintainer_emails", "")
+        """Chicken and egg: the first maintainer cannot be granted a row by
+        anyone, so the seed is checked before the table is consulted."""
+        monkeypatch.setattr(kb_auth.settings, "kb_maintainer_emails", "lead@example.com")
+        monkeypatch.setattr(kb_auth, "fetch_role", _role_returning(None))
         monkeypatch.setattr(
             kb_auth.httpx,
             "AsyncClient",
@@ -173,11 +188,40 @@ class TestAllowlist:
 
         assert await require_kb_maintainer(authorization="Bearer good") == "lead@example.com"
 
-    async def test_a_writer_is_not_automatically_a_maintainer(
+
+class TestRoleFromSupabase:
+    async def test_a_maintainer_row_grants_publishing(
         self, supabase_configured: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(kb_auth.settings, "kb_writer_emails", "@example.com")
-        monkeypatch.setattr(kb_auth.settings, "kb_maintainer_emails", "lead@example.com")
+        monkeypatch.setattr(kb_auth, "fetch_role", _role_returning("maintainer"))
+        monkeypatch.setattr(
+            kb_auth.httpx,
+            "AsyncClient",
+            _fake_client(_FakeResponse(200, {"email": "budi@example.com"})),
+        )
+
+        assert await require_kb_maintainer(authorization="Bearer good") == "budi@example.com"
+
+    async def test_a_writer_row_does_not_grant_publishing(
+        self, supabase_configured: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(kb_auth, "fetch_role", _role_returning("writer"))
+        monkeypatch.setattr(
+            kb_auth.httpx,
+            "AsyncClient",
+            _fake_client(_FakeResponse(200, {"email": "budi@example.com"})),
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            await require_kb_maintainer(authorization="Bearer good")
+
+        assert excinfo.value.status_code == 403
+
+    async def test_no_row_and_no_seed_cannot_publish(
+        self, supabase_configured: None, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Publishing fails closed. Submitting still works for the same user —
+        that asymmetry is the whole design."""
         monkeypatch.setattr(
             kb_auth.httpx,
             "AsyncClient",
@@ -188,3 +232,4 @@ class TestAllowlist:
         with pytest.raises(HTTPException) as excinfo:
             await require_kb_maintainer(authorization="Bearer good")
         assert excinfo.value.status_code == 403
+        assert "grant the role" in str(excinfo.value.detail)

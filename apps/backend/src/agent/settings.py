@@ -166,28 +166,26 @@ class Settings(BaseSettings):
     supabase_url: str = Field(default="", validation_alias="PUBLIC_SUPABASE_URL")
     supabase_anon_key: str = Field(default="", validation_alias="PUBLIC_SUPABASE_ANON_KEY")
 
-    # Who may submit a knowledge-base document, and who may publish one out of
-    # the review inbox. Comma-separated; an entry may be a full email
-    # (`a@b.com`) or a domain suffix (`@company.com`).
+    # BOOTSTRAP ONLY — who may publish knowledge-base documents before any role
+    # has been granted. The real list lives in the `kb_roles` table in Supabase
+    # (see supabase/migrations/), because a list of people is data, not config:
+    # it changes when somebody joins or leaves, not when we deploy.
     #
-    # An EMPTY writer list means "any signed-in user", which is deliberate: the
-    # meaningful jump is from "anyone who can reach the port" to "someone we
-    # can name in the git log", and requiring an allowlist to be curated before
-    # the feature works at all is how internal tools die unused. An empty
-    # maintainer list falls back to the writer list.
-    kb_writer_emails: str = ""
+    # This survives solely to break the chicken-and-egg — somebody has to be
+    # able to grant the first role. Keep it to the one or two people who
+    # administer the deployment. It is checked BEFORE the table, so it still
+    # works against an empty database.
+    #
+    # Comma-separated; an entry may be a full email (`a@b.com`) or a domain
+    # suffix (`@company.com`). There is no writer equivalent: submitting is open
+    # to any signed-in user, because submissions are quarantined in the review
+    # inbox and are not searchable until a maintainer publishes them.
     kb_maintainer_emails: str = ""
 
     @property
-    def kb_writer_list(self) -> list[str]:
-        """Parsed :attr:`kb_writer_emails`, empty when unset."""
-        return [e.strip().lower() for e in self.kb_writer_emails.split(",") if e.strip()]
-
-    @property
     def kb_maintainer_list(self) -> list[str]:
-        """Parsed :attr:`kb_maintainer_emails`, falling back to writers."""
-        explicit = [e.strip().lower() for e in self.kb_maintainer_emails.split(",") if e.strip()]
-        return explicit or self.kb_writer_list
+        """Parsed :attr:`kb_maintainer_emails`, empty when unset."""
+        return [e.strip().lower() for e in self.kb_maintainer_emails.split(",") if e.strip()]
 
     # MCP
     mcp_transport: str = "stdio"

@@ -26,7 +26,9 @@ Two constraints shaped the fixes. The embedding model is English while the corpu
 |---|---|
 | **`docs/knowledge-base/` is the corpus the form writes to**; `docs/products/` remains valid for hand-authored per-product folders | Matches where the documents actually are. ADR 0006's *reasoning* (structure drives retrieval) is upheld by the outline-prefilling form, not by forcing a folder shape nobody adopted |
 | **Submissions land in `docs/knowledge-base/_inbox/`** and are not indexed until published | Review gate at zero cost: `discover_knowledge_base` globs `*.md` **non-recursively**, so the inbox is invisible to the indexer without the indexer knowing it exists |
-| **Two roles: writer submits, maintainer publishes** | Two is what the workflow has. An empty writer allowlist means "any signed-in user" so the feature works before anyone curates a list |
+| **Submitting is open to any signed-in user; publishing needs a grant** | Submissions are quarantined, so a bad one is a file nobody reads yet. Publishing puts a document in front of every user of the agent — that is where the gate belongs |
+| **Grants live in a `kb_roles` table in Supabase**, not in env | A list of people is data, not configuration: it changes when somebody joins or leaves, not when we deploy. `KB_MAINTAINER_EMAILS` survives only as a bootstrap seed for the first maintainer, checked before the table so it works on an empty database |
+| **The role lookup reuses the caller's own token** | `kb_roles` grants "read your own row" under RLS, so no service-role key — a credential that bypasses every policy in the project — has to exist to answer a question the caller may already ask about themselves |
 | **Supabase `/auth/v1/user` verifies the bearer token** | No JWT secret to distribute or rotate, and a revoked session stops working immediately rather than at token expiry |
 | **One shared validator** (`doc_validation.validate_document`), called pre-write (422) and by `just validate-docs` | One definition of "valid". A second copy would drift, silently |
 | **`owner` and `last_reviewed` filled server-side** from the session and today's date | Fields the user is asked for are fields that rot. Zero extra inputs, and staleness becomes reportable |
@@ -45,6 +47,7 @@ Two constraints shaped the fixes. The embedding model is English while the corpu
 | Full reindex in a background task with status polling | Fixes the blocked request, not the waste: still 58s of CPU re-embedding unrelated chunks per save, and it needs a job-status UI |
 | A job queue (Celery/RQ) | Needs a long-running worker, which works against ADR 0005's scale-to-zero cost goal, for a problem incremental indexing removes outright |
 | Verify JWTs locally with the project secret | Another secret to distribute and rotate, and revoked sessions would keep working until expiry |
+| Keep both roles as env allowlists (the first version of this ADR) | Granting access meant editing a file on the server and restarting the backend, nobody in the app could see who had access, and it described people in a second place next to the Supabase tables that already do. Reverted before anything depended on it |
 | No review step, publish on submit | The state we were in. For a corpus with a single write path and no undo, one contradictory document is worse than one slow submission |
 
 ## Consequences
@@ -61,6 +64,8 @@ Two constraints shaped the fixes. The embedding model is English while the corpu
 - Publishing is a second, manual step. Deliberate, but it is friction, and if the inbox goes unwatched documents will sit there — the inbox listing endpoint exists so a maintainer UI can be built when that starts to bite.
 - The index lock is process-local. A `just index` run started by hand during a save is still outside its reach; the failure is obvious and recoverable by reindexing.
 - Auth requires Supabase to be configured. Unset means the write endpoints refuse — fail-closed, but it does mean local dev needs the same env as production.
+- Publishing now fails closed: with no seed and no `kb_roles` row, nobody can publish. That is the right default, but it means the table has to be created and `KB_MAINTAINER_EMAILS` seeded before the inbox can be drained. `supabase/README.md` has the two commands.
+- `supabase/migrations/` covers only `kb_roles`. `chat_sessions` and `chat_messages` were created by hand in the dashboard and are still not captured as SQL, so the folder cannot yet rebuild the project from scratch.
 - Two documentation shapes still coexist. This ADR makes that a decision rather than an accident, but the cost is that contributors must know which one they are writing.
 
 ## See also
