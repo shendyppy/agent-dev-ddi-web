@@ -55,6 +55,13 @@ port-check:
 
 # ─── RAG indexing ─────────────────────────────────────────────────────────────
 
+# Check every knowledge-base document against the same rules the API enforces
+# on write. PRODUCT-DOC-FORMAT.md has listed this as a TODO since ADR 0006;
+# it stopped being optional once a web form could produce invalid documents
+# faster than a reviewer can read them. Exits non-zero so CI can gate on it.
+validate-docs:
+    cd apps/backend; uv run python -m agent.doc_validation
+
 # (Re)build the ChromaDB index from docs/
 index:
     cd apps/backend; uv run python -m agent.indexing

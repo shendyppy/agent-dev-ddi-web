@@ -460,6 +460,34 @@ def _get_collection(client: PersistentClient) -> Collection:
     return client.get_or_create_collection(name=COLLECTION_NAME)
 
 
+_embedder: TextEmbedding | None = None
+_client: PersistentClient | None = None
+
+
+def _get_embedder() -> TextEmbedding:
+    """Process-wide fastembed model.
+
+    Constructing ``TextEmbedding`` initialises an ONNX session, which is the
+    slow part — irrelevant when this module was only ever a one-shot CLI, and
+    very relevant now that :func:`index_single_file` runs inside the API
+    process on the save path. Mirrors the caching already used in
+    ``mcp_servers/search_docs/handler.py``.
+    """
+    global _embedder
+    if _embedder is None:
+        _embedder = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
+    return _embedder
+
+
+def _get_client() -> PersistentClient:
+    """Process-wide Chroma client for the configured persist directory."""
+    global _client
+    if _client is None:
+        settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+        _client = PersistentClient(path=str(settings.chroma_persist_dir))
+    return _client
+
+
 def _embed_texts(texts: Iterable[str]) -> list[list[float]]:
     """Run fastembed over a list of strings.
 
@@ -467,10 +495,56 @@ def _embed_texts(texts: Iterable[str]) -> list[list[float]]:
     ``~/.cache/fastembed/`` — the first ``just index`` is therefore slower
     than later runs. No network calls after that.
     """
-    model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
     # ``embed`` returns numpy arrays; ChromaDB accepts plain lists. Convert
     # explicitly so the call site doesn't lug numpy types around.
-    return [vec.tolist() for vec in model.embed(list(texts))]
+    return [vec.tolist() for vec in _get_embedder().embed(list(texts))]
+
+
+def index_single_file(path: Path) -> int:
+    """Re-index exactly one file, in place, and return its chunk count.
+
+    This is what the save endpoint calls instead of shelling out to
+    ``just index``. The difference is not a micro-optimisation: a full rebuild
+    re-chunks and re-embeds the whole corpus, which measured ~60s here, and
+    roughly 95% of that work was the external ``tep-web`` source corpus, which
+    cannot possibly have changed because someone saved a markdown document.
+    Worse, the cost grew with the corpus, so the save button got slower every
+    time the product succeeded — heading straight for the reverse-proxy
+    timeout, at which point the browser reports a failure while the server
+    keeps working.
+
+    Scoped by the ``source`` metadata field, which every chunk carries and
+    which equals the chunk id prefix. Deleting by that field first means a
+    document that loses a section does not leave the removed section behind as
+    a retrievable orphan — the delete+upsert pair is what makes this a
+    *replace* rather than an append.
+
+    Not concurrency-safe on its own. Callers serialise it (see the lock in
+    ``server.create_knowledge_base``); that lock is process-local, so a
+    ``just index`` run started by hand at the same moment is still outside its
+    reach.
+    """
+    collection = _get_collection(_get_client())
+    source = _chunk_id_prefix(path)
+
+    chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
+
+    # Delete first, unconditionally: an empty document must still clear what
+    # the previous version of that document left in the index.
+    collection.delete(where={"source": source})
+
+    if not chunks:
+        print(f"[indexing] {_display_source(path)} -> 0 chunk(s) (removed from index)")
+        return 0
+
+    collection.upsert(
+        ids=[chunk.chunk_id for chunk in chunks],
+        documents=[chunk.text for chunk in chunks],
+        metadatas=[chunk.metadata for chunk in chunks],
+        embeddings=_embed_texts(chunk.text for chunk in chunks),
+    )
+    print(f"[indexing] {_display_source(path)} -> {len(chunks)} chunk(s) (incremental)")
+    return len(chunks)
 
 
 def _chunk_id_prefix(path: Path) -> str:
@@ -531,7 +605,7 @@ def build_index() -> None:
     updated. Re-running is safe — the upsert will catch up.
     """
     settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
-    client = PersistentClient(path=str(settings.chroma_persist_dir))
+    client = _get_client()
     collection = _get_collection(client)
 
     # 1. Discover all source files across every registered corpus.

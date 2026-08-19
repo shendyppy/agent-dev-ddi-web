@@ -131,6 +131,11 @@ export function ChatHeader({
             <button
               type="button"
               onClick={showModal}
+              // Its neighbour has had an aria-label since day one; this one
+              // shipped as a bare glyph, which made the whole feature
+              // undiscoverable to anyone who was not told about it.
+              aria-label={copy.kbAria}
+              title={copy.kbAria}
               class="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors hover:cursor-pointer"
             >
               <svg

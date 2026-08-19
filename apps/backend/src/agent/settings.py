@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -157,6 +157,37 @@ class Settings(BaseSettings):
     def cors_allowed_origins_list(self) -> list[str]:
         """Parsed :attr:`cors_allowed_origins`, empty when unset."""
         return [o.strip() for o in self.cors_allowed_origins.split(",") if o.strip()]
+
+    # Supabase. The frontend signs users in; the backend verifies the resulting
+    # access token before letting anyone write to the corpus. These read the
+    # same PUBLIC_* names the frontend already uses — the anon key is shipped
+    # to the browser, so it is not a secret and there is no second copy to keep
+    # in sync. Unset means the write endpoints refuse rather than fall open.
+    supabase_url: str = Field(default="", validation_alias="PUBLIC_SUPABASE_URL")
+    supabase_anon_key: str = Field(default="", validation_alias="PUBLIC_SUPABASE_ANON_KEY")
+
+    # Who may submit a knowledge-base document, and who may publish one out of
+    # the review inbox. Comma-separated; an entry may be a full email
+    # (`a@b.com`) or a domain suffix (`@company.com`).
+    #
+    # An EMPTY writer list means "any signed-in user", which is deliberate: the
+    # meaningful jump is from "anyone who can reach the port" to "someone we
+    # can name in the git log", and requiring an allowlist to be curated before
+    # the feature works at all is how internal tools die unused. An empty
+    # maintainer list falls back to the writer list.
+    kb_writer_emails: str = ""
+    kb_maintainer_emails: str = ""
+
+    @property
+    def kb_writer_list(self) -> list[str]:
+        """Parsed :attr:`kb_writer_emails`, empty when unset."""
+        return [e.strip().lower() for e in self.kb_writer_emails.split(",") if e.strip()]
+
+    @property
+    def kb_maintainer_list(self) -> list[str]:
+        """Parsed :attr:`kb_maintainer_emails`, falling back to writers."""
+        explicit = [e.strip().lower() for e in self.kb_maintainer_emails.split(",") if e.strip()]
+        return explicit or self.kb_writer_list
 
     # MCP
     mcp_transport: str = "stdio"
