@@ -233,16 +233,24 @@ The indexer uses recursive character splitting (800 tokens, 100 overlap). To get
 
 ## Validation
 
-A linter (TODO: `just validate-docs`) will check:
+`just validate-docs` exists and checks the **flat `docs/knowledge-base/` corpus** — the shape the web form writes (see [ADR 0011](adr/0011-knowledge-base-write-path.md)). The same function runs on every submission, so an invalid document is refused with a 422 before it reaches disk:
+
+- [x] Frontmatter parses as YAML
+- [x] `product_id`, `product_name`, `status` present and non-empty
+- [x] `product_id` is kebab-case
+- [x] `status` is one of `active` / `maintained` / `deprecated`
+- [x] `last_reviewed` is an ISO date when present
+- [x] Body is non-empty and has at least one markdown heading
+
+Still TODO, and specific to the **per-product folders** this document specifies:
 
 - [ ] Folder name matches frontmatter `id`
-- [ ] All required frontmatter fields present
 - [ ] All required `product.md` headings present in order
 - [ ] `last_reviewed` is within 6 months
 - [ ] Every feature listed in `product.md` has a corresponding `features/<id>.md`
 - [ ] Every `screenshot_scenarios` entry has a matching Playwright test
 
-Until that runs in CI, treat this spec as a code-review checklist.
+For those, treat this spec as a code-review checklist.
 
 ---
 

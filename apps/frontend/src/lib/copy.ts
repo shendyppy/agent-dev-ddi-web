@@ -125,6 +125,43 @@ export type Copy = {
   historyEmpty: string;
   historyLoading: string;
   historyNewChat: string;
+  // Knowledge-base submission form.
+  kbAria: string;
+  kbTitle: string;
+  kbSubtitle: string;
+  kbDocType: string;
+  kbDocTypeProduct: string;
+  kbDocTypeFeature: string;
+  kbDocTypeRunbook: string;
+  kbDocTypeHint: string;
+  kbTitleField: string;
+  kbTitlePlaceholder: string;
+  kbSlugPreview: (name: string) => string;
+  kbProduct: string;
+  kbProductPlaceholder: string;
+  kbProductLoading: string;
+  kbProductSearch: string;
+  kbProductNoMatch: string;
+  kbProductDocs: (n: number) => string;
+  kbProductCreate: (name: string) => string;
+  kbProductNewBadge: string;
+  kbProductNewIdLabel: string;
+  kbProductNewIdHint: string;
+  kbProductNewIdInvalid: string;
+  kbProductNewIdTaken: string;
+  kbProductNewNote: string;
+  kbProductClear: string;
+  kbContent: string;
+  kbContentPlaceholder: string;
+  kbRequired: string;
+  kbNeedsHeading: string;
+  kbDraftRestored: string;
+  kbSubmit: string;
+  kbSubmitting: string;
+  kbCancel: string;
+  kbSuccessTitle: string;
+  kbSuccessBody: string;
+  kbErrorTitle: string;
 };
 
 export const COPY: Record<Language, Copy> = {
@@ -233,6 +270,42 @@ export const COPY: Record<Language, Copy> = {
     historyEmpty: 'Belum ada riwayat percakapan.',
     historyLoading: 'Memuat riwayat…',
     historyNewChat: 'Percakapan baru',
+    kbAria: 'Tambah dokumen ke basis pengetahuan',
+    kbTitle: 'Tambah dokumen',
+    kbSubtitle: 'Dokumen masuk antrean review dulu, baru bisa dijawab agent.',
+    kbDocType: 'Jenis dokumen',
+    kbDocTypeProduct: 'Ringkasan produk',
+    kbDocTypeFeature: 'Satu fitur',
+    kbDocTypeRunbook: 'Panduan operasional',
+    kbDocTypeHint: 'Isi kerangka di bawah. Satu dokumen sebaiknya membahas satu hal.',
+    kbTitleField: 'Judul',
+    kbTitlePlaceholder: 'misal: Fitur Login',
+    kbSlugPreview: (name: string) => `Disimpan sebagai ${name}`,
+    kbProduct: 'Produk',
+    kbProductPlaceholder: 'Pilih produk',
+    kbProductLoading: 'Memuat daftar produk…',
+    kbProductSearch: 'Cari atau ketik nama produk baru…',
+    kbProductNoMatch: 'Tidak ada produk yang cocok.',
+    kbProductDocs: (n: number) => `${n} dokumen`,
+    kbProductCreate: (name: string) => `Buat produk baru: "${name}"`,
+    kbProductNewBadge: 'Produk baru',
+    kbProductNewIdLabel: 'ID produk',
+    kbProductNewIdHint: 'Dipakai untuk memfilter pencarian. Huruf kecil, angka, dan tanda hubung.',
+    kbProductNewIdInvalid: 'Format ID belum benar. Contoh: klob-mobile',
+    kbProductNewIdTaken: 'ID ini sudah dipakai produk lain. Pilih produknya dari daftar saja.',
+    kbProductNewNote: 'Produk baru muncul di daftar setelah dokumen pertamanya dipublikasikan.',
+    kbProductClear: 'Ganti produk',
+    kbContent: 'Isi dokumen',
+    kbContentPlaceholder: 'Tulis di sini…',
+    kbRequired: 'Bagian ini belum diisi.',
+    kbNeedsHeading: 'Isi dokumen perlu minimal satu judul bagian (diawali #).',
+    kbDraftRestored: 'Draf sebelumnya dipulihkan.',
+    kbSubmit: 'Kirim untuk review',
+    kbSubmitting: 'Mengirim…',
+    kbCancel: 'Batal',
+    kbSuccessTitle: 'Terkirim',
+    kbSuccessBody: 'Dokumen menunggu review sebelum bisa dijawab agent.',
+    kbErrorTitle: 'Gagal mengirim',
   },
   en: {
     appTitle: 'Documentation Agent',
@@ -338,6 +411,43 @@ export const COPY: Record<Language, Copy> = {
     historyEmpty: 'No conversation history yet.',
     historyLoading: 'Loading history…',
     historyNewChat: 'New chat',
+    kbAria: 'Add a document to the knowledge base',
+    kbTitle: 'Add a document',
+    kbSubtitle: 'Documents go to a review queue before the agent can answer from them.',
+    kbDocType: 'Document type',
+    kbDocTypeProduct: 'Product overview',
+    kbDocTypeFeature: 'Single feature',
+    kbDocTypeRunbook: 'Runbook',
+    kbDocTypeHint: 'Fill in the outline below. One document should cover one thing.',
+    kbTitleField: 'Title',
+    kbTitlePlaceholder: 'e.g. Login feature',
+    kbSlugPreview: (name: string) => `Saved as ${name}`,
+    kbProduct: 'Product',
+    kbProductPlaceholder: 'Pick a product',
+    kbProductLoading: 'Loading products…',
+    kbProductSearch: 'Search, or type a new product name…',
+    kbProductNoMatch: 'No product matches that.',
+    kbProductDocs: (n: number) => `${n} documents`,
+    kbProductCreate: (name: string) => `Create new product: "${name}"`,
+    kbProductNewBadge: 'New product',
+    kbProductNewIdLabel: 'Product ID',
+    kbProductNewIdHint: 'Used to scope search. Lowercase letters, digits and hyphens.',
+    kbProductNewIdInvalid: 'That ID is not valid. Example: klob-mobile',
+    kbProductNewIdTaken:
+      'That ID already belongs to another product. Pick it from the list instead.',
+    kbProductNewNote: 'A new product appears in the list once its first document is published.',
+    kbProductClear: 'Change product',
+    kbContent: 'Document body',
+    kbContentPlaceholder: 'Write here…',
+    kbRequired: 'This one is still empty.',
+    kbNeedsHeading: 'The body needs at least one section heading (starting with #).',
+    kbDraftRestored: 'Restored your previous draft.',
+    kbSubmit: 'Send for review',
+    kbSubmitting: 'Sending…',
+    kbCancel: 'Cancel',
+    kbSuccessTitle: 'Sent',
+    kbSuccessBody: 'Your document is waiting for review before the agent uses it.',
+    kbErrorTitle: 'Could not send',
   },
 };
 

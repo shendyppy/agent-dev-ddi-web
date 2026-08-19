@@ -15,6 +15,8 @@ Each ADR captures a non-trivial architectural choice with the **Context**, **Dec
 | [0007](0007-retire-portrai-cms-agent.md) | Retire `portrai_cms_agent.py`, finalize MCP/LangGraph/Chroma path | Accepted |
 | [0008](0008-image-output-via-playwright.md) | Image output via Playwright + external source ingestion | Accepted |
 | [0009](0009-enforced-product-scope-and-loop-guard.md) | Enforce product scope in the orchestrator; bound the agent tool loop | Accepted |
+| [0010](0010-credential-resolution-and-byok.md) | Explicit credential resolution + bring-your-own-key | Accepted |
+| [0011](0011-knowledge-base-write-path.md) | Knowledge-base write path: review inbox, git history, incremental indexing | Accepted |
 
 ## Writing a new ADR
 

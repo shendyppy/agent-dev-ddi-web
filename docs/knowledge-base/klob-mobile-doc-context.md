@@ -1,5 +1,5 @@
 ---
-product_id: klob mobile
+product_id: klob-mobile
 product_name: Klob Mobile
 status: active
 ---

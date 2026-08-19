@@ -7,6 +7,15 @@ export type AuthState = {
   loading: boolean;
   login: () => Promise<void>;
   logout: () => Promise<void>;
+  /**
+   * Current access token, or null when signed out.
+   *
+   * Read fresh from Supabase at call time rather than held in state: tokens
+   * are refreshed in the background, and a copy captured at sign-in would go
+   * stale mid-session and start failing writes with a 401 that looks like a
+   * permissions problem.
+   */
+  getAccessToken: () => Promise<string | null>;
 };
 
 export function useAuth(): AuthState {
@@ -46,5 +55,11 @@ export function useAuth(): AuthState {
     await supabase.auth.signOut();
   }
 
-  return { user, loading, login, logout };
+  async function getAccessToken(): Promise<string | null> {
+    if (!supabase) return null;
+    const { data } = await supabase.auth.getSession();
+    return data.session?.access_token ?? null;
+  }
+
+  return { user, loading, login, logout, getAccessToken };
 }

@@ -22,9 +22,8 @@ import { ChatHeader } from './chat/ChatHeader';
 import { MessageList } from './chat/MessageList';
 import { ChatComposer } from './chat/ChatComposer';
 import { HistoryPanel } from './chat/HistoryPanel';
-import ModalInputBaseKnowledge from './ui/ModalInputBaseKnowledge';
+import { KnowledgeBaseModal, DRAFT_KEY } from './chat/KnowledgeBaseModal';
 import { API_BASE } from '@/lib/chat';
-import { notification } from 'antd';
 
 export default function Chat() {
   const auth = useAuth();
@@ -34,58 +33,68 @@ export default function Chat() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [kbError, setKbError] = useState<string | null>(null);
+  const [kbSubmitted, setKbSubmitted] = useState(false);
 
   const showModal = () => {
+    setKbError(null);
     setIsModalOpen(true);
   };
 
-  const handleOk = async (
-    filename: string,
-    productId: string,
-    productName: string,
-    content: string,
-  ) => {
-    if (!filename || !productId || !productName || !content) {
-      notification.warning({
-        title: 'Peringatan',
-        description: 'Semua isian tidak boleh kosong!',
-      });
-      return;
-    }
-
+  const handleKbSubmit = async (draft: {
+    title: string;
+    productId: string;
+    productName: string;
+    body: string;
+  }) => {
     setIsSaving(true);
+    setKbError(null);
     try {
+      // The write endpoint requires a verified session — the button being
+      // visible is not authorisation. Fetch the token at submit time rather
+      // than caching it, because Supabase refreshes it in the background.
+      const token = await auth.getAccessToken();
+      if (!token) {
+        throw new Error(chat.copy.errorPrefix);
+      }
+
       const res = await fetch(`${API_BASE}/api/knowledge-base`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          filename,
-          product_id: productId,
-          product_name: productName,
-          content,
+          filename: draft.title,
+          product_id: draft.productId,
+          product_name: draft.productName,
+          content: draft.body,
         }),
       });
 
       if (!res.ok) {
-        throw new Error('Gagal menyimpan knowledge base');
+        // Surface the server's own message rather than one generic string. The
+        // failures the user can act on are distinct: 401/403 = sign in or ask
+        // for access, 409 = that filename is taken, 422 = the document did not
+        // validate. A single "Gagal" toast told them none of that, so the only
+        // recovery on offer was to retype and retry.
+        const detail = await res
+          .json()
+          .then((body) => (typeof body?.detail === 'string' ? body.detail : null))
+          .catch(() => null);
+        throw new Error(detail ?? `${chat.copy.kbErrorTitle} (HTTP ${res.status})`);
       }
 
-      notification.success({
-        title: 'Berhasil',
-        description: 'Knowledge base berhasil disimpan!',
-      });
+      // The draft exists to survive an accidental close, not a successful
+      // submit — keeping it would repopulate the form with a document that is
+      // already in the queue.
+      window.localStorage.removeItem(DRAFT_KEY);
       setIsModalOpen(false);
-
-      // 'just index' is now synchronous on the backend, so we can fetch immediately
-      chat.retryBootstrap();
+      setKbSubmitted(true);
+      window.setTimeout(() => setKbSubmitted(false), 6000);
     } catch (e) {
       console.error(e);
-      notification.error({
-        title: 'Gagal',
-        description: 'Gagal menyimpan knowledge base!',
-      });
+      setKbError(e instanceof Error ? e.message : chat.copy.kbErrorTitle);
     } finally {
       setIsSaving(false);
     }
@@ -180,12 +189,28 @@ export default function Chat() {
           onRetryBootstrap={chat.retryBootstrap}
         />
 
-        <ModalInputBaseKnowledge
-          isModalOpen={isModalOpen}
-          isSaving={isSaving}
-          handleOk={handleOk}
-          handleCancel={handleCancel}
+        <KnowledgeBaseModal
+          copy={chat.copy}
+          open={isModalOpen}
+          saving={isSaving}
+          products={chat.products}
+          productsLoading={chat.productsLoading}
+          error={kbError}
+          onSubmit={handleKbSubmit}
+          onClose={handleCancel}
         />
+
+        {/* Confirmation lives outside the modal because the modal closes on
+          success — a toast inside it would never be seen. */}
+        {kbSubmitted && (
+          <div
+            role="status"
+            class="fixed bottom-24 left-1/2 z-50 -translate-x-1/2 rounded-lg border border-border bg-card px-4 py-2.5 shadow-lg"
+          >
+            <p class="text-sm font-medium">{chat.copy.kbSuccessTitle}</p>
+            <p class="text-xs text-muted-foreground">{chat.copy.kbSuccessBody}</p>
+          </div>
+        )}
 
         {/* Translucent + blurred so the transcript visibly passes *under* the
           composer as it scrolls, which is what sells the layering. The border

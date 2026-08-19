@@ -1,5 +1,5 @@
 ---
-product_id: learning hub mobile
+product_id: learninghub-mobile
 product_name: Learning Hub Mobile
 status: active
 ---

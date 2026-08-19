@@ -460,6 +460,34 @@ def _get_collection(client: PersistentClient) -> Collection:
     return client.get_or_create_collection(name=COLLECTION_NAME)
 
 
+_embedder: TextEmbedding | None = None
+_client: PersistentClient | None = None
+
+
+def _get_embedder() -> TextEmbedding:
+    """Process-wide fastembed model.
+
+    Constructing ``TextEmbedding`` initialises an ONNX session, which is the
+    slow part — irrelevant when this module was only ever a one-shot CLI, and
+    very relevant now that :func:`index_single_file` runs inside the API
+    process on the save path. Mirrors the caching already used in
+    ``mcp_servers/search_docs/handler.py``.
+    """
+    global _embedder
+    if _embedder is None:
+        _embedder = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
+    return _embedder
+
+
+def _get_client() -> PersistentClient:
+    """Process-wide Chroma client for the configured persist directory."""
+    global _client
+    if _client is None:
+        settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
+        _client = PersistentClient(path=str(settings.chroma_persist_dir))
+    return _client
+
+
 def _embed_texts(texts: Iterable[str]) -> list[list[float]]:
     """Run fastembed over a list of strings.
 
@@ -467,23 +495,97 @@ def _embed_texts(texts: Iterable[str]) -> list[list[float]]:
     ``~/.cache/fastembed/`` — the first ``just index`` is therefore slower
     than later runs. No network calls after that.
     """
-    model = TextEmbedding(model_name=EMBEDDING_MODEL_NAME)
     # ``embed`` returns numpy arrays; ChromaDB accepts plain lists. Convert
     # explicitly so the call site doesn't lug numpy types around.
-    return [vec.tolist() for vec in model.embed(list(texts))]
+    return [vec.tolist() for vec in _get_embedder().embed(list(texts))]
 
 
-def _prune_stale_chunks(collection: Collection, current_ids: set[str]) -> int:
+def index_single_file(path: Path) -> int:
+    """Re-index exactly one file, in place, and return its chunk count.
+
+    This is what the save endpoint calls instead of shelling out to
+    ``just index``. The difference is not a micro-optimisation: a full rebuild
+    re-chunks and re-embeds the whole corpus, which measured ~60s here, and
+    roughly 95% of that work was the external ``tep-web`` source corpus, which
+    cannot possibly have changed because someone saved a markdown document.
+    Worse, the cost grew with the corpus, so the save button got slower every
+    time the product succeeded — heading straight for the reverse-proxy
+    timeout, at which point the browser reports a failure while the server
+    keeps working.
+
+    Scoped by the ``source`` metadata field, which every chunk carries and
+    which equals the chunk id prefix. Deleting by that field first means a
+    document that loses a section does not leave the removed section behind as
+    a retrievable orphan — the delete+upsert pair is what makes this a
+    *replace* rather than an append.
+
+    Not concurrency-safe on its own. Callers serialise it (see the lock in
+    ``server.create_knowledge_base``); that lock is process-local, so a
+    ``just index`` run started by hand at the same moment is still outside its
+    reach.
+    """
+    collection = _get_collection(_get_client())
+    source = _chunk_id_prefix(path)
+
+    chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
+
+    # Delete first, unconditionally: an empty document must still clear what
+    # the previous version of that document left in the index.
+    collection.delete(where={"source": source})
+
+    if not chunks:
+        print(f"[indexing] {_display_source(path)} -> 0 chunk(s) (removed from index)")
+        return 0
+
+    collection.upsert(
+        ids=[chunk.chunk_id for chunk in chunks],
+        documents=[chunk.text for chunk in chunks],
+        metadatas=[chunk.metadata for chunk in chunks],
+        embeddings=_embed_texts(chunk.text for chunk in chunks),
+    )
+    print(f"[indexing] {_display_source(path)} -> {len(chunks)} chunk(s) (incremental)")
+    return len(chunks)
+
+
+def _chunk_id_prefix(path: Path) -> str:
+    """The ``source`` half of every chunk ID produced from ``path``.
+
+    Chunk IDs are ``f"{source}::{chunk_index}"`` (see :func:`chunk_file` and
+    :func:`chunk_code_file`), so ``f"{_chunk_id_prefix(path)}::"`` matches
+    exactly the chunks belonging to one file.
+    """
+    if _is_tep_web(path):
+        return f"tep-web::{_tep_web_relpath(path)}"
+    return _relative_source(path)
+
+
+def _prune_stale_chunks(
+    collection: Collection,
+    current_ids: set[str],
+    protected_prefixes: set[str] | None = None,
+) -> int:
     """Remove chunks from the collection whose IDs are no longer produced.
 
     Without this step, deleting a doc file would leave its chunks stranded
     in the index — they would still be returned by retrieval. Run after
     every upsert so the corpus mirrors what's on disk.
 
+    ``protected_prefixes`` spares the chunks of files that failed to parse on
+    this run. Those files produced no chunks, so they would otherwise look
+    exactly like deleted files and lose their previously-indexed content —
+    meaning a stray colon in one document would silently delete that
+    document's answers rather than merely failing to refresh them. Retrieval
+    keeps serving the last good version until the file is fixed.
+
     Returns the number of chunks deleted (for logging).
     """
+    protected = tuple(f"{prefix}::" for prefix in (protected_prefixes or set()))
     existing = collection.get(include=[])  # only need IDs
-    stale = [cid for cid in existing.get("ids", []) if cid not in current_ids]
+    stale = [
+        cid
+        for cid in existing.get("ids", [])
+        if cid not in current_ids and not (protected and cid.startswith(protected))
+    ]
     if stale:
         collection.delete(ids=stale)
     return len(stale)
@@ -503,7 +605,7 @@ def build_index() -> None:
     updated. Re-running is safe — the upsert will catch up.
     """
     settings.chroma_persist_dir.mkdir(parents=True, exist_ok=True)
-    client = PersistentClient(path=str(settings.chroma_persist_dir))
+    client = _get_client()
     collection = _get_collection(client)
 
     # 1. Discover all source files across every registered corpus.
@@ -523,9 +625,23 @@ def build_index() -> None:
     #    stream this loop and upsert in batches per file. Files under
     #    tep_web_root (the external Acelents source corpus) go through the
     #    code chunker; everything else through the markdown chunker.
+    #
+    #    Each file is chunked inside its own try/except. Without that guard a
+    #    single unparseable file aborted the entire run: one document whose
+    #    YAML frontmatter did not parse (a ``product_name`` containing a colon
+    #    is enough) raised out of ``chunk_file`` and took the whole corpus with
+    #    it, so every later ``just index`` failed identically until a human
+    #    found the offending file by hand. One bad document should cost you
+    #    that document, not the index.
     all_chunks: list[IndexedChunk] = []
+    skipped: list[tuple[Path, str]] = []
     for path in sources:
-        file_chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
+        try:
+            file_chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
+        except Exception as exc:  # noqa: BLE001 — any parse failure is per-file news
+            skipped.append((path, f"{type(exc).__name__}: {exc}"))
+            print(f"[indexing] SKIPPED {_display_source(path)} — {type(exc).__name__}: {exc}")
+            continue
         all_chunks.extend(file_chunks)
         print(f"[indexing] {_display_source(path)} -> {len(file_chunks)} chunk(s)")
 
@@ -547,14 +663,24 @@ def build_index() -> None:
         embeddings=embeddings,
     )
 
-    # 5. Drop chunks from files that no longer exist or were renamed.
+    # 5. Drop chunks from files that no longer exist or were renamed — but not
+    #    those of files that merely failed to parse this run (see docstring).
     stale_removed = _prune_stale_chunks(
-        collection, current_ids={chunk.chunk_id for chunk in all_chunks}
+        collection,
+        current_ids={chunk.chunk_id for chunk in all_chunks},
+        protected_prefixes={_chunk_id_prefix(path) for path, _ in skipped},
     )
     if stale_removed:
         print(f"[indexing] pruned {stale_removed} stale chunk(s) from deleted/renamed files")
 
     print(f"[indexing] done — collection '{COLLECTION_NAME}' now has {collection.count()} chunk(s)")
+
+    # Loud, and last, so a skipped file cannot scroll past unnoticed in CI logs
+    # or in the output of a `just index` triggered from the web form.
+    if skipped:
+        print(f"[indexing] WARNING: {len(skipped)} file(s) skipped — fix these and reindex:")
+        for path, reason in skipped:
+            print(f"[indexing]   - {_display_source(path)}: {reason}")
 
 
 if __name__ == "__main__":

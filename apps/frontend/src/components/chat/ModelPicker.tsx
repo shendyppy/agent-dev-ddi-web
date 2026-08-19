@@ -110,7 +110,11 @@ export function ModelPicker({
         class="flex cursor-pointer list-none items-center gap-1.5 rounded-full border border-hairline bg-card/70 px-2.5 py-1 text-[0.6875rem] shadow-panel transition-all duration-200 ease-expo hover:border-primary/40 hover:shadow-raised focus-visible:border-ring focus-visible:shadow-glow focus-visible:outline-none motion-safe:active:scale-[0.97]"
         aria-label={copy.modelPickerAria}
       >
-        <span class="font-mono text-muted-foreground">
+        {/* Truncated, unlike the list rows: this is a chip in a header that
+            must not grow, and the full label is one click away in the panel.
+            max-w keeps a long provider-prefixed name from pushing the language
+            toggle and avatar off the row. */}
+        <span class="max-w-[10rem] truncate font-mono text-muted-foreground">
           {active?.label ?? modelId.split('/').pop() ?? copy.modelPickerLabel}
         </span>
         {/* Visible without opening the panel. The entire reason this moved out
@@ -251,7 +255,14 @@ export function ModelPicker({
 
           <ul
             class={clsx(
-              'mb-2 flex max-h-72 flex-col gap-0.5 overflow-y-auto transition-opacity duration-200',
+              // overflow-x-hidden is not redundant with overflow-y-auto: per
+              // spec, setting one axis to something other than `visible` makes
+              // the other compute to `auto`. So the y-scroller was silently
+              // giving itself an x-scrollbar too, and any row wider than the
+              // 20rem panel produced one. The rows below no longer overflow,
+              // and this makes sure a future long string cannot bring it back.
+              'mb-2 flex max-h-72 flex-col gap-0.5 overflow-y-auto overflow-x-hidden',
+              'transition-opacity duration-200',
               loading && 'opacity-50',
             )}
           >
@@ -279,7 +290,10 @@ export function ModelPicker({
                     // `models.is_allowed` on the backend, which is about what this
                     // agent can drive — not about whose key it is.
                     class={clsx(
-                      'flex w-full cursor-pointer flex-col rounded-md px-2.5 py-1.5 text-left',
+                      // min-w-0: a flex item defaults to min-width:auto, which
+                      // refuses to shrink below its content. That is what let a
+                      // long model label push the row past the panel width.
+                      'flex w-full min-w-0 cursor-pointer flex-col rounded-md px-2.5 py-1.5 text-left',
                       'transition-all duration-150 ease-expo hover:bg-accent/60',
                       // A whole row sliding would be noisy in a list this dense;
                       // 2px is enough to feel responsive under the cursor.
@@ -294,7 +308,10 @@ export function ModelPicker({
                   >
                     <span
                       class={clsx(
-                        'text-[0.8rem] font-medium',
+                        // break-words rather than truncate: the label is how you
+                        // identify the model you are picking, so wrapping a long
+                        // one costs a line, while clipping it costs the answer.
+                        'break-words text-[0.8rem] font-medium',
                         selected ? 'text-primary' : 'text-foreground',
                       )}
                     >
@@ -304,7 +321,10 @@ export function ModelPicker({
                       is the one worth spelling out: the server cannot vouch for
                       it, so the note transfers that uncertainty to the person
                       who owns the key rather than implying a guarantee. */}
-                    <span class="text-[0.68rem] leading-snug text-muted-foreground">
+                    {/* The unavailable variant embeds an env var name — an
+                      unbroken token like OPENROUTER_API_KEY is exactly the kind
+                      of string that used to widen the row. */}
+                    <span class="break-words text-[0.68rem] leading-snug text-muted-foreground">
                       {model.source === 'server'
                         ? model.note
                         : model.source === 'your-key'

@@ -65,24 +65,32 @@ at the same time. Drift between the two is the most common SSE bug.
 
 from __future__ import annotations
 
+import datetime
 import json
 import re
-import subprocess
 import sys
+import threading
 import traceback
 import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException
+import frontmatter
+import yaml
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
 from . import mcp_clients, models
+from .doc_validation import validate_document
 from .graph import get_graph
+from .indexing import index_single_file
+from .kb_auth import require_kb_maintainer, require_kb_writer
+from .kb_git import commit_paths
 from .settings import settings
 
 
@@ -221,45 +229,225 @@ class KnowledgeBaseRequest(BaseModel):
     product_id: str
     product_name: str
     content: str
+    # Explicit opt-in to replacing a document that already exists. Absent or
+    # false means a name collision is refused rather than silently applied.
+    # "FAQ" and "faq!!!" both sanitize to faq.md, which makes the collision far
+    # more likely than it looks — and while every change is committed to git
+    # now, "recoverable from history" is not the same as "safe to do by
+    # accident".
+    overwrite: bool = False
+
+
+# Serialises writes to the Chroma index within this process. Two people saving
+# at the same moment would otherwise have their delete+upsert pairs interleave
+# on the same collection. Process-local by design: this is an internal tool
+# running a single backend process, and a heavier cross-process lock would buy
+# protection against a scenario (someone running `just index` by hand mid-save)
+# that is rare, obvious when it happens, and recoverable by reindexing.
+_INDEX_LOCK = threading.Lock()
+
+
+def _safe_doc_name(filename: str) -> str:
+    """Slugify a user-supplied title into a ``*.md`` filename.
+
+    Also neutralises path separators and ``..`` — they become literal hyphens,
+    so the result cannot escape the directory it is joined to. That property is
+    load-bearing; the tests lock it so a future "nicer slugs" rewrite cannot
+    quietly reintroduce traversal.
+
+    An existing ``.md`` suffix is stripped before slugifying and re-added
+    afterwards. Without that step the dot itself was replaced, so a user typing
+    "fitur-login.md" got ``fitur-login-md.md`` — and, worse, the publish
+    endpoint could never find a file by the name it had just reported.
+    """
+    stem = filename[:-3] if filename.lower().endswith(".md") else filename
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "-", stem).strip("-").lower()
+    if not safe:
+        safe = "untitled"
+    return f"{safe}.md"
+
+
+def _kb_dirs() -> tuple[Path, Path]:
+    """``(published_dir, inbox_dir)`` for the knowledge base.
+
+    The inbox is a SUBdirectory of the published one, and that is the whole
+    trick: ``indexing.discover_knowledge_base`` globs ``*.md`` non-recursively,
+    so anything in ``_inbox/`` is invisible to the indexer without the indexer
+    needing to know the inbox exists. Review costs one `mkdir` and no special
+    cases.
+    """
+    from .settings import REPO_ROOT
+
+    published = REPO_ROOT / "docs" / "knowledge-base"
+    return published, published / "_inbox"
 
 
 @app.post("/api/knowledge-base")
-def create_knowledge_base(request: KnowledgeBaseRequest) -> dict[str, str]:
-    """Save a new knowledge base document to docs/knowledge-base."""
-    from .settings import REPO_ROOT
-    
-    # Sanitize the filename, replace spaces with hyphens, convert to lowercase
-    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '-', request.filename).strip('-').lower()
-    if not safe_name:
-        safe_name = "untitled"
-    if not safe_name.endswith('.md'):
-        safe_name += '.md'
-        
-    kb_dir = REPO_ROOT / "docs" / "knowledge-base"
-    kb_dir.mkdir(parents=True, exist_ok=True)
-    
-    frontmatter = f"""---
-product_id: {request.product_id}
-product_name: {request.product_name}
-status: active
----
+def create_knowledge_base(
+    request: KnowledgeBaseRequest,
+    author_email: str = Depends(require_kb_writer),
+) -> dict[str, str]:
+    """Submit a knowledge-base document for review.
 
-"""
-    full_content = frontmatter + str(request.content)
-    
-    file_path = kb_dir / safe_name
-    file_path.write_text(full_content, encoding="utf-8")
-    
-    # Trigger a synchronous index rebuild
-    subprocess.run(
-        ["just", "index"],
-        cwd=REPO_ROOT,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+    The document is validated, written to the review inbox, and committed to
+    git — but NOT indexed. It becomes answerable only once a maintainer
+    publishes it (see :func:`publish_knowledge_base`). Submissions used to go
+    straight into the live corpus, which is how an internal knowledge base ends
+    up with two documents confidently contradicting each other.
+    """
+    published_dir, inbox_dir = _kb_dirs()
+    safe_name = _safe_doc_name(request.filename)
+    inbox_dir.mkdir(parents=True, exist_ok=True)
+    file_path = inbox_dir / safe_name
+
+    # Collision is checked against BOTH directories: a name already published
+    # is just as taken as one already waiting for review.
+    for existing, where in (
+        (file_path, "the review inbox"),
+        (published_dir / safe_name, "the published corpus"),
+    ):
+        if existing.exists() and not request.overwrite:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"'{safe_name}' already exists in {where}. Resend with overwrite=true "
+                    "to replace it, or choose a different filename."
+                ),
+            )
+
+    # Frontmatter is serialised by PyYAML, never interpolated into a string.
+    # A product name as ordinary as "Klob: Mobile App" produces invalid YAML
+    # when pasted raw between the --- fences; safe_dump quotes whatever needs
+    # quoting. allow_unicode keeps Indonesian product names readable on disk
+    # instead of escaping them to \uXXXX.
+    #
+    # owner and last_reviewed are filled in server-side from the verified
+    # session and today's date. Asking the user for them guarantees they rot;
+    # deriving them costs the user nothing and makes staleness reportable.
+    header = yaml.safe_dump(
+        {
+            "product_id": request.product_id,
+            "product_name": request.product_name,
+            "status": "active",
+            "owner": author_email,
+            "last_reviewed": datetime.date.today().isoformat(),
+        },
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
     )
-    
-    return {"status": "success", "file": safe_name}
+    full_content = f"---\n{header}---\n\n{request.content}"
+
+    # Validate before the document touches the corpus, through the very same
+    # function `just validate-docs` runs over the whole corpus — one definition
+    # of "valid", two consumers. Writing first and discovering the problem at
+    # index time is what made one bad document permanent: the file survived the
+    # failed subprocess and then broke every later indexing run for everyone.
+    problems = validate_document(full_content)
+    if problems:
+        raise HTTPException(
+            status_code=422,
+            detail="document failed validation: " + "; ".join(problems),
+        )
+
+    file_path.write_text(full_content, encoding="utf-8")
+
+    from .settings import REPO_ROOT
+
+    sha = commit_paths(
+        REPO_ROOT,
+        [file_path],
+        f"docs(kb): submit {safe_name} for review\n\nSubmitted via the web form by {author_email}.",
+        author_email,
+    )
+
+    return {
+        "status": "pending_review",
+        "file": safe_name,
+        "owner": author_email,
+        "commit": sha or "",
+    }
+
+
+@app.get("/api/knowledge-base/inbox")
+def list_knowledge_base_inbox(
+    _maintainer: str = Depends(require_kb_maintainer),
+) -> dict[str, Any]:
+    """Documents waiting for review, newest first."""
+    _, inbox_dir = _kb_dirs()
+    if not inbox_dir.exists():
+        return {"documents": []}
+
+    documents = []
+    for path in sorted(inbox_dir.glob("*.md"), key=lambda p: p.stat().st_mtime, reverse=True):
+        post = frontmatter.loads(path.read_text(encoding="utf-8"))
+        documents.append(
+            {
+                "file": path.name,
+                "product_id": post.metadata.get("product_id", ""),
+                "product_name": post.metadata.get("product_name", ""),
+                "owner": post.metadata.get("owner", ""),
+                "submitted": datetime.datetime.fromtimestamp(path.stat().st_mtime).isoformat(),
+            }
+        )
+    return {"documents": documents}
+
+
+@app.post("/api/knowledge-base/{filename}/publish")
+def publish_knowledge_base(
+    filename: str,
+    maintainer_email: str = Depends(require_kb_maintainer),
+) -> dict[str, str]:
+    """Move a reviewed document out of the inbox and index it."""
+    published_dir, inbox_dir = _kb_dirs()
+    # Re-slugify rather than trusting the path parameter: this value reaches a
+    # filesystem join, and "publish ../../etc/passwd" must not be expressible.
+    safe_name = _safe_doc_name(filename)
+    source = inbox_dir / safe_name
+    target = published_dir / safe_name
+
+    if not source.exists():
+        raise HTTPException(status_code=404, detail=f"'{safe_name}' is not in the review inbox.")
+
+    problems = validate_document(source.read_text(encoding="utf-8"))
+    if problems:
+        # A document can rot between submission and review — someone may have
+        # hand-edited it in the inbox. Check again rather than assume.
+        raise HTTPException(
+            status_code=422,
+            detail="document failed validation: " + "; ".join(problems),
+        )
+
+    source.replace(target)
+
+    try:
+        with _INDEX_LOCK:
+            chunk_count = index_single_file(target)
+    except Exception as exc:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"'{safe_name}' was published, but indexing it failed "
+                f"({type(exc).__name__}: {exc}). Run 'just index' to retry."
+            ),
+        ) from exc
+
+    from .settings import REPO_ROOT
+
+    sha = commit_paths(
+        REPO_ROOT,
+        [source, target],
+        f"docs(kb): publish {safe_name}\n\nReviewed and published by {maintainer_email}.",
+        maintainer_email,
+    )
+
+    return {
+        "status": "published",
+        "file": safe_name,
+        "chunks": str(chunk_count),
+        "commit": sha or "",
+    }
 
 
 # ─── Chat endpoint ───────────────────────────────────────────────────────
@@ -272,7 +460,16 @@ def root() -> dict[str, str]:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "healthy"}
+    """Liveness, plus enough identity to tell *which* service answered.
+
+    ``service`` exists because a bare ``{"status": "healthy"}`` is true of
+    every uvicorn app on the machine. When another project held port 8000, a
+    curl against /api/health looked entirely healthy — it was simply a
+    different program. One field makes "am I talking to doc-agent?" answerable
+    in one request instead of by inspecting a 404 that the browser has already
+    turned into a CORS message.
+    """
+    return {"status": "healthy", "service": "doc-agent"}
 
 
 @app.get("/api/meta")

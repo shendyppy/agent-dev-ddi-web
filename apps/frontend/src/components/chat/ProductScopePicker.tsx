@@ -215,7 +215,12 @@ export function ProductScopePicker({
           onKeyDown={onListKeyDown}
           // left-0 on mobile (the pill spans the header's second row), pinned
           // right and given a comfortable minimum from sm up.
-          class="anim-pop absolute left-0 right-0 top-full z-50 mt-1.5 max-h-[min(60vh,20rem)] overflow-y-auto rounded-xl border border-hairline bg-popover p-1 shadow-raised backdrop-blur-xl focus:outline-none sm:left-auto sm:min-w-[15rem]"
+          // overflow-x-hidden pairs with overflow-y-auto on purpose: per spec,
+          // a non-`visible` value on one axis makes the other compute to
+          // `auto`, so this list would hand itself a horizontal scrollbar the
+          // moment a row outgrew it. The rows truncate today, so nothing
+          // overflows — this keeps it that way.
+          class="anim-pop absolute left-0 right-0 top-full z-50 mt-1.5 max-h-[min(60vh,20rem)] overflow-y-auto overflow-x-hidden rounded-xl border border-hairline bg-popover p-1 shadow-raised backdrop-blur-xl focus:outline-none sm:left-auto sm:min-w-[15rem]"
         >
           {options.map((option, index) => {
             const isSelected = option.value === selectedValue;
