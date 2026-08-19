@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
@@ -167,7 +167,13 @@ class Settings(BaseSettings):
     # embeds in its markdown image — it MUST be reachable from the browser, and
     # since the FE runs on a different port than the BE, it has to be absolute
     # (a relative "/screenshots/x.png" would resolve against the FE origin).
-    # Keep the host:port in sync with BACKEND_PORT.
+    #
+    # Left unset it FOLLOWS backend_port — see _follow_backend_port below. It
+    # used to be a hardcoded ":8000" with a comment asking you to keep it in
+    # sync by hand, which stopped being viable once `just dev` started picking
+    # the port dynamically: every screenshot URL would point at whatever else
+    # happened to own 8000. Set SCREENSHOT_BASE_URL explicitly to override
+    # (deployments behind a proxy need to).
     screenshot_dir: Path = REPO_ROOT / ".data" / "screenshots"
     screenshot_base_url: str = "http://localhost:8000"
 
@@ -181,6 +187,22 @@ class Settings(BaseSettings):
     @classmethod
     def _anchor_to_repo_root(cls, value: Path) -> Path:
         return resolve_from_repo_root(value)
+
+    @model_validator(mode="after")
+    def _follow_backend_port(self) -> Settings:
+        """Point ``screenshot_base_url`` at ``backend_port`` unless it was set.
+
+        ``model_fields_set`` is what makes this safe: it holds only the fields
+        that actually came from the environment or the constructor, so an
+        explicit SCREENSHOT_BASE_URL always wins and only the *default* moves.
+        Without this, running the backend on any port other than 8000 produced
+        screenshot URLs the browser could not fetch — and the agent embeds
+        those URLs in its answers, so the failure surfaced as broken images in
+        a chat reply rather than as anything resembling a port problem.
+        """
+        if "screenshot_base_url" not in self.model_fields_set:
+            self.screenshot_base_url = f"http://localhost:{self.backend_port}"
+        return self
 
 
 settings = Settings()

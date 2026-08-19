@@ -473,17 +473,45 @@ def _embed_texts(texts: Iterable[str]) -> list[list[float]]:
     return [vec.tolist() for vec in model.embed(list(texts))]
 
 
-def _prune_stale_chunks(collection: Collection, current_ids: set[str]) -> int:
+def _chunk_id_prefix(path: Path) -> str:
+    """The ``source`` half of every chunk ID produced from ``path``.
+
+    Chunk IDs are ``f"{source}::{chunk_index}"`` (see :func:`chunk_file` and
+    :func:`chunk_code_file`), so ``f"{_chunk_id_prefix(path)}::"`` matches
+    exactly the chunks belonging to one file.
+    """
+    if _is_tep_web(path):
+        return f"tep-web::{_tep_web_relpath(path)}"
+    return _relative_source(path)
+
+
+def _prune_stale_chunks(
+    collection: Collection,
+    current_ids: set[str],
+    protected_prefixes: set[str] | None = None,
+) -> int:
     """Remove chunks from the collection whose IDs are no longer produced.
 
     Without this step, deleting a doc file would leave its chunks stranded
     in the index — they would still be returned by retrieval. Run after
     every upsert so the corpus mirrors what's on disk.
 
+    ``protected_prefixes`` spares the chunks of files that failed to parse on
+    this run. Those files produced no chunks, so they would otherwise look
+    exactly like deleted files and lose their previously-indexed content —
+    meaning a stray colon in one document would silently delete that
+    document's answers rather than merely failing to refresh them. Retrieval
+    keeps serving the last good version until the file is fixed.
+
     Returns the number of chunks deleted (for logging).
     """
+    protected = tuple(f"{prefix}::" for prefix in (protected_prefixes or set()))
     existing = collection.get(include=[])  # only need IDs
-    stale = [cid for cid in existing.get("ids", []) if cid not in current_ids]
+    stale = [
+        cid
+        for cid in existing.get("ids", [])
+        if cid not in current_ids and not (protected and cid.startswith(protected))
+    ]
     if stale:
         collection.delete(ids=stale)
     return len(stale)
@@ -523,9 +551,23 @@ def build_index() -> None:
     #    stream this loop and upsert in batches per file. Files under
     #    tep_web_root (the external Acelents source corpus) go through the
     #    code chunker; everything else through the markdown chunker.
+    #
+    #    Each file is chunked inside its own try/except. Without that guard a
+    #    single unparseable file aborted the entire run: one document whose
+    #    YAML frontmatter did not parse (a ``product_name`` containing a colon
+    #    is enough) raised out of ``chunk_file`` and took the whole corpus with
+    #    it, so every later ``just index`` failed identically until a human
+    #    found the offending file by hand. One bad document should cost you
+    #    that document, not the index.
     all_chunks: list[IndexedChunk] = []
+    skipped: list[tuple[Path, str]] = []
     for path in sources:
-        file_chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
+        try:
+            file_chunks = chunk_code_file(path) if _is_tep_web(path) else chunk_file(path)
+        except Exception as exc:  # noqa: BLE001 — any parse failure is per-file news
+            skipped.append((path, f"{type(exc).__name__}: {exc}"))
+            print(f"[indexing] SKIPPED {_display_source(path)} — {type(exc).__name__}: {exc}")
+            continue
         all_chunks.extend(file_chunks)
         print(f"[indexing] {_display_source(path)} -> {len(file_chunks)} chunk(s)")
 
@@ -547,14 +589,24 @@ def build_index() -> None:
         embeddings=embeddings,
     )
 
-    # 5. Drop chunks from files that no longer exist or were renamed.
+    # 5. Drop chunks from files that no longer exist or were renamed — but not
+    #    those of files that merely failed to parse this run (see docstring).
     stale_removed = _prune_stale_chunks(
-        collection, current_ids={chunk.chunk_id for chunk in all_chunks}
+        collection,
+        current_ids={chunk.chunk_id for chunk in all_chunks},
+        protected_prefixes={_chunk_id_prefix(path) for path, _ in skipped},
     )
     if stale_removed:
         print(f"[indexing] pruned {stale_removed} stale chunk(s) from deleted/renamed files")
 
     print(f"[indexing] done — collection '{COLLECTION_NAME}' now has {collection.count()} chunk(s)")
+
+    # Loud, and last, so a skipped file cannot scroll past unnoticed in CI logs
+    # or in the output of a `just index` triggered from the web form.
+    if skipped:
+        print(f"[indexing] WARNING: {len(skipped)} file(s) skipped — fix these and reindex:")
+        for path, reason in skipped:
+            print(f"[indexing]   - {_display_source(path)}: {reason}")
 
 
 if __name__ == "__main__":

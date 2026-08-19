@@ -30,15 +30,28 @@ install-e2e:
 
 # ─── Development ──────────────────────────────────────────────────────────────
 
-# Start FE + BE concurrently (uses pnpm concurrently script under the hood)
+# Start FE + BE concurrently, on a port that is actually free.
+#
+# The port is resolved ONCE here and handed to both halves, rather than each
+# assuming 8000. When another service already owned 8000, uvicorn died with
+# [Errno 10048] while concurrently kept the frontend up — so the browser talked
+# to the foreign service, got a 404 with no CORS header, and reported a CORS
+# error that looked nothing like the environment collision it actually was.
+# See apps/backend/src/agent/devserver.py.
 dev:
-    npx concurrently -n "be,fe" -c "blue,magenta" "just dev-be" "just dev-fe"
+    Push-Location apps/backend; $p = (uv run python -m agent.devserver); Pop-Location; if (-not $p) { throw "could not resolve a free backend port" }; $env:BACKEND_PORT = $p; $env:PUBLIC_API_BASE_URL = "http://localhost:$p"; Write-Host "[just] backend -> http://localhost:$p (frontend will call this)" -ForegroundColor Cyan; npx concurrently -n "be,fe" -c "blue,magenta" "just dev-be" "just dev-fe"
 
 dev-fe:
     cd apps/frontend; pnpm dev
 
+# BACKEND_PORT is set by `just dev`. Running this recipe on its own resolves a
+# port the same way, so a standalone backend never silently fights for 8000.
 dev-be:
-    cd apps/backend; uv run uvicorn agent.server:app --reload --port 8000 --app-dir src
+    cd apps/backend; $p = if ($env:BACKEND_PORT) { $env:BACKEND_PORT } else { (uv run python -m agent.devserver) }; Write-Host "[just] uvicorn on port $p"; uv run uvicorn agent.server:app --reload --port $p --app-dir src
+
+# Which port would `just dev` choose right now, and is 8000 actually free?
+port-check:
+    Push-Location apps/backend; $p = (uv run python -m agent.devserver); Pop-Location; Write-Host "resolved backend port: $p"; if ($p -ne 8000) { Write-Host "note: 8000 is taken, so dev would use $p" -ForegroundColor Yellow }
 
 # ─── RAG indexing ─────────────────────────────────────────────────────────────
 

@@ -69,7 +69,16 @@ export default function Chat() {
       });
 
       if (!res.ok) {
-        throw new Error('Gagal menyimpan knowledge base');
+        // Surface the server's own message rather than one generic string. The
+        // failures the user can actually act on are distinct: 409 = that
+        // filename is taken, 422 = the document did not parse, 500/504 = it
+        // was saved but not indexed. A single "Gagal" toast told them none of
+        // that, so the only recovery on offer was to retype and retry.
+        const detail = await res
+          .json()
+          .then((body) => (typeof body?.detail === 'string' ? body.detail : null))
+          .catch(() => null);
+        throw new Error(detail ?? `Gagal menyimpan knowledge base (HTTP ${res.status})`);
       }
 
       notification.success({
@@ -84,7 +93,10 @@ export default function Chat() {
       console.error(e);
       notification.error({
         title: 'Gagal',
-        description: 'Gagal menyimpan knowledge base!',
+        description: e instanceof Error ? e.message : 'Gagal menyimpan knowledge base!',
+        // Server messages are a sentence or two, not a few words; the default
+        // auto-dismiss is too short to read one.
+        duration: 10,
       });
     } finally {
       setIsSaving(false);

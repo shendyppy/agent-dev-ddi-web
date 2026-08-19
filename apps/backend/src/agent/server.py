@@ -75,6 +75,8 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
 
+import frontmatter
+import yaml
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -221,44 +223,123 @@ class KnowledgeBaseRequest(BaseModel):
     product_id: str
     product_name: str
     content: str
+    # Explicit opt-in to replacing a document that already exists. Absent or
+    # false means a name collision is refused rather than silently applied:
+    # this is the only write path into the corpus, nothing here goes through
+    # git, and there is no undo — so an accidental overwrite is unrecoverable.
+    # "FAQ" and "faq!!!" both sanitize to faq.md, which makes the collision far
+    # more likely than it looks.
+    overwrite: bool = False
+
+
+# A full rebuild currently takes ~60s on this corpus and grows with it. The cap
+# is generous enough not to fire in normal use, and exists so a wedged run
+# fails the request instead of pinning a threadpool worker indefinitely.
+INDEX_TIMEOUT_SECONDS = 600
 
 
 @app.post("/api/knowledge-base")
 def create_knowledge_base(request: KnowledgeBaseRequest) -> dict[str, str]:
-    """Save a new knowledge base document to docs/knowledge-base."""
+    """Save a new knowledge base document to ``docs/knowledge-base``, then reindex."""
     from .settings import REPO_ROOT
-    
-    # Sanitize the filename, replace spaces with hyphens, convert to lowercase
-    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '-', request.filename).strip('-').lower()
+
+    # Sanitize the filename, replace spaces with hyphens, convert to lowercase.
+    # This also neutralises path separators and "..", so the result cannot
+    # escape kb_dir — they become literal hyphens rather than traversal.
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]", "-", request.filename).strip("-").lower()
     if not safe_name:
         safe_name = "untitled"
-    if not safe_name.endswith('.md'):
-        safe_name += '.md'
-        
+    if not safe_name.endswith(".md"):
+        safe_name += ".md"
+
     kb_dir = REPO_ROOT / "docs" / "knowledge-base"
     kb_dir.mkdir(parents=True, exist_ok=True)
-    
-    frontmatter = f"""---
-product_id: {request.product_id}
-product_name: {request.product_name}
-status: active
----
-
-"""
-    full_content = frontmatter + str(request.content)
-    
     file_path = kb_dir / safe_name
-    file_path.write_text(full_content, encoding="utf-8")
-    
-    # Trigger a synchronous index rebuild
-    subprocess.run(
-        ["just", "index"],
-        cwd=REPO_ROOT,
-        check=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL
+
+    if file_path.exists() and not request.overwrite:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{safe_name}' already exists. Resend with overwrite=true to replace it, "
+                "or choose a different filename."
+            ),
+        )
+
+    # Frontmatter is serialised by PyYAML, never interpolated into a string.
+    # A product name as ordinary as "Klob: Mobile App" produces invalid YAML
+    # when pasted raw between the --- fences; safe_dump quotes whatever needs
+    # quoting. allow_unicode keeps Indonesian product names readable on disk
+    # instead of escaping them to \uXXXX.
+    header = yaml.safe_dump(
+        {
+            "product_id": request.product_id,
+            "product_name": request.product_name,
+            "status": "active",
+        },
+        allow_unicode=True,
+        sort_keys=False,
+        default_flow_style=False,
     )
-    
+    full_content = f"---\n{header}---\n\n{request.content}"
+
+    # Parse the document back before it touches the corpus. Writing first and
+    # discovering the problem at index time is what made one bad document
+    # permanent: the file survived the failed subprocess and then broke every
+    # later indexing run for everyone. Rejecting here means a malformed
+    # document never reaches disk at all.
+    try:
+        frontmatter.loads(full_content)
+    except Exception as exc:  # any parse failure is the caller's 422, not our 500
+        raise HTTPException(
+            status_code=422,
+            detail=f"document is not valid markdown+frontmatter: {type(exc).__name__}: {exc}",
+        ) from exc
+
+    file_path.write_text(full_content, encoding="utf-8")
+
+    # Trigger a synchronous index rebuild. stderr is captured rather than
+    # discarded so a failure can say what went wrong instead of surfacing as a
+    # bare 500 with no diagnostic anywhere. Each failure mode is reported
+    # distinctly, and all of them make clear the document *was* saved — the
+    # caller should not retype it.
+    try:
+        subprocess.run(
+            ["just", "index"],
+            cwd=REPO_ROOT,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            timeout=INDEX_TIMEOUT_SECONDS,
+        )
+    except FileNotFoundError as exc:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"'{safe_name}' was saved, but 'just' is not on PATH so it could not be "
+                "indexed. Run 'just index' manually to make it searchable."
+            ),
+        ) from exc
+    except subprocess.TimeoutExpired as exc:
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=504,
+            detail=(
+                f"'{safe_name}' was saved, but indexing exceeded {INDEX_TIMEOUT_SECONDS}s "
+                "and was abandoned. It is not searchable yet."
+            ),
+        ) from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or b"").decode("utf-8", "replace").strip()
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                f"'{safe_name}' was saved, but indexing failed: "
+                f"{stderr[-500:] or 'no stderr captured'}"
+            ),
+        ) from exc
+
     return {"status": "success", "file": safe_name}
 
 
@@ -272,7 +353,16 @@ def root() -> dict[str, str]:
 
 @app.get("/api/health")
 def health() -> dict[str, str]:
-    return {"status": "healthy"}
+    """Liveness, plus enough identity to tell *which* service answered.
+
+    ``service`` exists because a bare ``{"status": "healthy"}`` is true of
+    every uvicorn app on the machine. When another project held port 8000, a
+    curl against /api/health looked entirely healthy — it was simply a
+    different program. One field makes "am I talking to doc-agent?" answerable
+    in one request instead of by inspecting a 404 that the browser has already
+    turned into a CORS message.
+    """
+    return {"status": "healthy", "service": "doc-agent"}
 
 
 @app.get("/api/meta")
