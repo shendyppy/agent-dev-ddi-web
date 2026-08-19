@@ -140,6 +140,17 @@ export type Copy = {
   kbProduct: string;
   kbProductPlaceholder: string;
   kbProductLoading: string;
+  kbProductSearch: string;
+  kbProductNoMatch: string;
+  kbProductDocs: (n: number) => string;
+  kbProductCreate: (name: string) => string;
+  kbProductNewBadge: string;
+  kbProductNewIdLabel: string;
+  kbProductNewIdHint: string;
+  kbProductNewIdInvalid: string;
+  kbProductNewIdTaken: string;
+  kbProductNewNote: string;
+  kbProductClear: string;
   kbContent: string;
   kbContentPlaceholder: string;
   kbRequired: string;
@@ -273,6 +284,17 @@ export const COPY: Record<Language, Copy> = {
     kbProduct: 'Produk',
     kbProductPlaceholder: 'Pilih produk',
     kbProductLoading: 'Memuat daftar produk…',
+    kbProductSearch: 'Cari atau ketik nama produk baru…',
+    kbProductNoMatch: 'Tidak ada produk yang cocok.',
+    kbProductDocs: (n: number) => `${n} dokumen`,
+    kbProductCreate: (name: string) => `Buat produk baru: "${name}"`,
+    kbProductNewBadge: 'Produk baru',
+    kbProductNewIdLabel: 'ID produk',
+    kbProductNewIdHint: 'Dipakai untuk memfilter pencarian. Huruf kecil, angka, dan tanda hubung.',
+    kbProductNewIdInvalid: 'Format ID belum benar. Contoh: klob-mobile',
+    kbProductNewIdTaken: 'ID ini sudah dipakai produk lain. Pilih produknya dari daftar saja.',
+    kbProductNewNote: 'Produk baru muncul di daftar setelah dokumen pertamanya dipublikasikan.',
+    kbProductClear: 'Ganti produk',
     kbContent: 'Isi dokumen',
     kbContentPlaceholder: 'Tulis di sini…',
     kbRequired: 'Bagian ini belum diisi.',
@@ -403,6 +425,18 @@ export const COPY: Record<Language, Copy> = {
     kbProduct: 'Product',
     kbProductPlaceholder: 'Pick a product',
     kbProductLoading: 'Loading products…',
+    kbProductSearch: 'Search, or type a new product name…',
+    kbProductNoMatch: 'No product matches that.',
+    kbProductDocs: (n: number) => `${n} documents`,
+    kbProductCreate: (name: string) => `Create new product: "${name}"`,
+    kbProductNewBadge: 'New product',
+    kbProductNewIdLabel: 'Product ID',
+    kbProductNewIdHint: 'Used to scope search. Lowercase letters, digits and hyphens.',
+    kbProductNewIdInvalid: 'That ID is not valid. Example: klob-mobile',
+    kbProductNewIdTaken:
+      'That ID already belongs to another product. Pick it from the list instead.',
+    kbProductNewNote: 'A new product appears in the list once its first document is published.',
+    kbProductClear: 'Change product',
     kbContent: 'Document body',
     kbContentPlaceholder: 'Write here…',
     kbRequired: 'This one is still empty.',

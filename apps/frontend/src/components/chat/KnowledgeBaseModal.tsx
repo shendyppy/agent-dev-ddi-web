@@ -24,9 +24,10 @@
  * close, so one stray Esc destroyed a half-hour of writing.
  */
 
-import { useEffect, useMemo, useRef, useState } from 'preact/hooks';
+import { useEffect, useRef, useState } from 'preact/hooks';
 import type { Product } from '@/lib/chat';
 import type { Copy } from '@/lib/copy';
+import { ProductCombobox, isProductChoiceValid, type ProductChoice } from './ProductCombobox';
 
 export type DocType = 'product' | 'feature' | 'runbook';
 
@@ -60,7 +61,17 @@ function outlineFor(docType: DocType): string {
 type Draft = {
   docType: DocType;
   title: string;
+  /** Null until a product is chosen. Carries `isNew` so a half-finished new
+   *  product survives a closed tab along with everything else. */
+  product: ProductChoice | null;
+  body: string;
+};
+
+export type KnowledgeBaseSubmission = {
+  docType: DocType;
+  title: string;
   productId: string;
+  productName: string;
   body: string;
 };
 
@@ -71,7 +82,7 @@ type KnowledgeBaseModalProps = {
   products: Product[];
   productsLoading: boolean;
   error: string | null;
-  onSubmit: (draft: Draft & { productName: string }) => void;
+  onSubmit: (submission: KnowledgeBaseSubmission) => void;
   onClose: () => void;
 };
 
@@ -87,7 +98,7 @@ export function KnowledgeBaseModal({
 }: KnowledgeBaseModalProps) {
   const [docType, setDocType] = useState<DocType>('feature');
   const [title, setTitle] = useState('');
-  const [productId, setProductId] = useState('');
+  const [product, setProduct] = useState<ProductChoice | null>(null);
   const [body, setBody] = useState('');
   // Only shown after a submit attempt: flagging empty fields while someone is
   // still filling the form in is nagging, not help.
@@ -106,7 +117,7 @@ export function KnowledgeBaseModal({
         const draft = JSON.parse(stored) as Draft;
         setDocType(draft.docType ?? 'feature');
         setTitle(draft.title ?? '');
-        setProductId(draft.productId ?? '');
+        setProduct(draft.product ?? null);
         setBody(draft.body ?? '');
         setDraftRestored(Boolean(draft.title || draft.body));
         return;
@@ -122,9 +133,9 @@ export function KnowledgeBaseModal({
   // Persist on every change. Cheap, and it means a closed tab is recoverable.
   useEffect(() => {
     if (!open) return;
-    const draft: Draft = { docType, title, productId, body };
+    const draft: Draft = { docType, title, product, body };
     window.localStorage.setItem(DRAFT_KEY, JSON.stringify(draft));
-  }, [open, docType, title, productId, body]);
+  }, [open, docType, title, product, body]);
 
   // Esc closes, matching every other dialog in the app.
   useEffect(() => {
@@ -136,12 +147,12 @@ export function KnowledgeBaseModal({
     return () => window.removeEventListener('keydown', onKey);
   }, [open, onClose]);
 
-  const selected = useMemo(() => products.find((p) => p.id === productId), [products, productId]);
-
   // Mirrors the server's validator, so the user finds out here rather than
   // through a rejected request.
   const missingTitle = !title.trim();
-  const missingProduct = !productId;
+  // Covers both "nothing chosen" and "a new product whose id is malformed or
+  // already taken" — the combobox owns that rule so the two cannot disagree.
+  const missingProduct = !isProductChoiceValid(product, products);
   const missingBody = !body.trim();
   const missingHeading = !missingBody && !/^#{1,3} \S/m.test(body);
   const invalid = missingTitle || missingProduct || missingBody || missingHeading;
@@ -160,11 +171,12 @@ export function KnowledgeBaseModal({
   function handleSubmit() {
     setAttempted(true);
     if (invalid || saving) return;
+    if (!product) return;
     onSubmit({
       docType,
       title: title.trim(),
-      productId,
-      productName: selected?.name ?? productId,
+      productId: product.id,
+      productName: product.name,
       body,
     });
   }
@@ -248,26 +260,16 @@ export function KnowledgeBaseModal({
             </div>
 
             <div>
-              <label class="mb-1.5 block text-sm font-medium" for="kb-product">
-                {copy.kbProduct}
-              </label>
-              <select
-                id="kb-product"
-                value={productId}
-                disabled={productsLoading}
-                onChange={(e) => setProductId((e.target as HTMLSelectElement).value)}
-                class="w-full rounded-md border border-border bg-background px-3 py-2 text-sm outline-none focus:border-primary disabled:opacity-60"
-              >
-                <option value="">
-                  {productsLoading ? copy.kbProductLoading : copy.kbProductPlaceholder}
-                </option>
-                {products.map((product) => (
-                  <option key={product.id} value={product.id}>
-                    {product.name}
-                  </option>
-                ))}
-              </select>
-              {attempted && missingProduct && (
+              <span class="mb-1.5 block text-sm font-medium">{copy.kbProduct}</span>
+              <ProductCombobox
+                copy={copy}
+                products={products}
+                loading={productsLoading}
+                value={product}
+                onChange={setProduct}
+                invalid={attempted && missingProduct}
+              />
+              {attempted && missingProduct && !product && (
                 <p class="mt-1 text-xs text-destructive">{copy.kbRequired}</p>
               )}
             </div>
